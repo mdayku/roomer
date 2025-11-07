@@ -3,10 +3,12 @@ frontend:
   phases:
     preBuild:
       commands:
+        - pwd && ls -la
         - npm install -g pnpm
         - pnpm install --frozen-lockfile
     build:
       commands:
+        - pwd && ls -la apps/
         - pnpm --filter @app/web run build
   artifacts:
     baseDirectory: apps/web/dist
@@ -22,11 +24,13 @@ backend:
   phases:
     preBuild:
       commands:
+        - pwd && ls -la
         - npm install -g pnpm
-        - cd apps/server && pnpm install --frozen-lockfile
+        - ls -la apps/
+        - cd apps/server && pwd && pnpm install --frozen-lockfile
     build:
       commands:
-        - cd apps/server && pnpm run build
+        - cd apps/server && pwd && pnpm run build
   artifacts:
     baseDirectory: apps/server/dist
     files:
