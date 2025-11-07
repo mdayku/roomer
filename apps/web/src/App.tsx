@@ -45,6 +45,7 @@ export default function App(){
   const [selectedBlueprintId, setSelectedBlueprintId] = useState<string>('');
   const [currentView, setCurrentView] = useState<'upload' | 'saved'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState<string>('');
 
   // Load saved blueprints from localStorage on mount
   useEffect(() => {
@@ -66,6 +67,34 @@ export default function App(){
   useEffect(() => {
     localStorage.setItem('savedBlueprints', JSON.stringify(savedBlueprints));
   }, [savedBlueprints]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key) {
+          case 'u':
+            e.preventDefault();
+            setCurrentView('upload');
+            break;
+          case 's':
+            e.preventDefault();
+            setCurrentView('saved');
+            break;
+          case 'n':
+            e.preventDefault();
+            if (currentView === 'upload') {
+              const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+              fileInput?.click();
+            }
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [currentView]);
 
   const handleImageSelect = (url: string) => {
     setImgUrl(url);
@@ -118,11 +147,22 @@ export default function App(){
   const handleUploadAndDetect = async (file: File) => {
     try {
       setIsProcessing(true);
+      setProcessingProgress('Uploading blueprint...');
+
+      // Simulate progress updates (in real app, this would come from the API)
+      setTimeout(() => setProcessingProgress('Analyzing blueprint...'), 500);
+      setTimeout(() => setProcessingProgress('Detecting rooms...'), 1500);
+      setTimeout(() => setProcessingProgress('Processing results...'), 2500);
+
       const result = await detectRooms(file);
       handleDetectionResult(result);
     } catch (error) {
       console.error('Detection failed:', error);
-      // For demo, create a mock result
+
+      // Show user-friendly error message
+      alert(`Detection failed: ${error instanceof Error ? error.message : 'Unknown error'}. Using demo results.`);
+
+      // For demo, create a mock result with more rooms
       const mockResult: FeatureCollection = {
         type: 'FeatureCollection',
         features: [
@@ -130,13 +170,39 @@ export default function App(){
             type: 'Feature',
             properties: {
               id: 'room_001',
-              name_hint: 'Living Room',
-              confidence: 0.92,
-              bbox_norm: [0.1, 0.1, 0.4, 0.3]
+              name_hint: 'Entry Hall',
+              confidence: 0.95,
+              bbox_norm: [0.05, 0.06, 0.18, 0.24]
             },
             geometry: {
               type: 'Polygon',
-              coordinates: [[[0.1, 0.1], [0.4, 0.1], [0.4, 0.3], [0.1, 0.3], [0.1, 0.1]]]
+              coordinates: [[[0.05, 0.06], [0.18, 0.06], [0.18, 0.24], [0.05, 0.24], [0.05, 0.06]]]
+            }
+          },
+          {
+            type: 'Feature',
+            properties: {
+              id: 'room_002',
+              name_hint: 'Living Room',
+              confidence: 0.92,
+              bbox_norm: [0.22, 0.06, 0.68, 0.45]
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[[0.22, 0.06], [0.68, 0.06], [0.68, 0.28], [0.54, 0.28], [0.54, 0.45], [0.22, 0.45], [0.22, 0.06]]]
+            }
+          },
+          {
+            type: 'Feature',
+            properties: {
+              id: 'room_003',
+              name_hint: 'Kitchen',
+              confidence: 0.88,
+              bbox_norm: [0.72, 0.06, 0.95, 0.35]
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[[0.72, 0.06], [0.95, 0.06], [0.95, 0.35], [0.72, 0.35], [0.72, 0.06]]]
             }
           }
         ]
@@ -144,6 +210,7 @@ export default function App(){
       handleDetectionResult(mockResult);
     } finally {
       setIsProcessing(false);
+      setProcessingProgress('');
     }
   };
 
@@ -152,9 +219,12 @@ export default function App(){
       <div style={{padding:16, maxWidth: '1400px', margin: '0 auto'}}>
         <div style={{marginBottom: 24}}>
           <h1 style={{marginBottom: 8, color: '#2c3e50'}}>Room Detection AI</h1>
-          <p style={{color: '#666', marginBottom: 0}}>
+          <p style={{color: '#666', marginBottom: 8}}>
             Upload architectural blueprints and automatically detect room boundaries using AI
           </p>
+          <div style={{fontSize: '12px', color: '#888'}}>
+            <strong>Keyboard shortcuts:</strong> Ctrl+U (Upload), Ctrl+S (Saved), Ctrl+N (New File)
+          </div>
         </div>
 
         {/* Navigation Tabs */}
@@ -217,12 +287,22 @@ export default function App(){
                   <div style={{
                     marginTop: 12,
                     padding: 8,
-                    background: '#fff3cd',
-                    border: '1px solid #ffeaa7',
+                    background: '#d1ecf1',
+                    border: '1px solid #bee5eb',
                     borderRadius: 4,
-                    color: '#856404'
+                    color: '#0c5460'
                   }}>
-                    Processing blueprint with {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}...
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <div style={{fontSize: '16px'}}>🔄</div>
+                      <div>
+                        <div style={{fontWeight: 'bold'}}>
+                          Processing with {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}
+                        </div>
+                        <div style={{fontSize: '14px', marginTop: 2}}>
+                          {processingProgress || 'Preparing...'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

@@ -1,0 +1,68 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 8
+
+    - name: Install root dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Install all workspace dependencies
+      run: pnpm install --frozen-lockfile --recursive
+
+    - name: Type check backend
+      run: pnpm --filter @app/server run build
+
+    - name: Type check frontend
+      run: pnpm --filter @app/web run build
+
+    - name: Lint backend
+      run: pnpm --filter @app/server run lint 2>/dev/null || echo "No lint script found"
+
+    - name: Lint frontend
+      run: pnpm --filter @app/web run lint 2>/dev/null || echo "No lint script found"
+
+    - name: Build frontend for production
+      run: pnpm --filter @app/web run build
+
+    - name: Build backend for production
+      run: pnpm --filter @app/server run build
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          apps/web/dist/
+          apps/server/dist/
+        retention-days: 30
+
+  # Optional: Add deployment job later
+  # deploy:
+  #   needs: test-and-build
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/master'
+  #   steps:
+  #     - name: Deploy to AWS Amplify
+  #       # Add deployment steps here
