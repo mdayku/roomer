@@ -38,10 +38,11 @@ def main():
 
         # Check GPU and force usage if available
         if torch.cuda.is_available():
-            device = 0  # Use GPU device 0
+            device = 'cuda:0'  # Explicitly specify CUDA device
             print(f"✅ Using GPU: {torch.cuda.get_device_name(0)}")
             print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
             print(f"CUDA Version: {torch.version.cuda}")
+            print(f"Device set to: {device}")
         else:
             device = 'cpu'
             print("⚠️ No GPU available, using CPU (this will be slow)")
@@ -84,6 +85,8 @@ def main():
 
         # Training with proper config for detection model
         print("\n5. Starting training...")
+        print(f"Training on device: {device}")
+
         results = model.train(
             data=str(data_yaml),
             epochs=20,  # Proper training epochs
@@ -92,7 +95,7 @@ def main():
             device=device,
             workers=2,   # Use multiprocessing
             project='./local_training_output',
-            name='room_detection_v1',
+            name='room_detection_v2',  # Changed name to avoid conflicts
             save=True,
             verbose=True,
             patience=5,  # Early stopping

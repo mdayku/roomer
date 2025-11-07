@@ -1,0 +1,5 @@
+model,total_images,TP,FP,FN,precision,recall,f1,avg_image_recall,median_image_recall
+debug_run2,400,0,39,11985,0.0000,0.0000,0.0000,0.0000,0.0000
+debug_run3,400,1928,794,10057,0.7083,0.1609,0.2622,0.2098,0.1807
+room_detection_v1,400,5754,3202,6231,0.6425,0.4801,0.5495,0.5385,0.5455
+room_detection_v2,400,7054,1944,4931,0.7840,0.5886,0.6724,0.6454,0.6557

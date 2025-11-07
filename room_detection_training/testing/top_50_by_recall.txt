@@ -1,0 +1,67 @@
+TOP 50 IMAGES BY RECALL (TP / GT)
+============================================================
+
+Rank  Image Name                Recall    TP    GT    Detected
+----  ------------------------  --------  ----  ----  --------
+  1   000322_F1_original.png    0.357   10   28   22
+  2   000343_F1_original.png    0.263    5   19   19
+  3   000100_F1_original.png    0.250    2    8   13
+  4   000226_F1_original.png    0.216    8   37   24
+  5   000205_F1_original.png    0.179    5   28   24
+  6   000099_F1_original.png    0.158    3   19   21
+  7   000361_F1_original.png    0.154    2   13   13
+  8   000007_F1_original.png    0.143    2   14   17
+  9   000336_F1_original.png    0.143    3   21   21
+ 10   000364_F1_original.png    0.143    3   21   18
+ 11   000341_F1_original.png    0.130    3   23   19
+ 12   000020_F1_original.png    0.125    2   16   16
+ 13   000254_F1_original.png    0.125    2   16   16
+ 14   000274_F1_original.png    0.111    2   18   15
+ 15   000115_F1_original.png    0.105    2   19   13
+ 16   000129_F1_original.png    0.100    2   20   21
+ 17   000002_F1_original.png    0.087    2   23   20
+ 18   000104_F1_original.png    0.083    1   12   15
+ 19   000209_F1_original.png    0.080    2   25   20
+ 20   000165_F1_original.png    0.077    1   13   15
+ 21   000017_F1_original.png    0.071    1   14   12
+ 22   000308_F1_original.png    0.071    1   14   13
+ 23   000006_F1_original.png    0.067    2   30   22
+ 24   000051_F1_original.png    0.067    1   15   16
+ 25   000272_F1_original.png    0.067    2   30   23
+ 26   000174_F1_original.png    0.062    1   16   12
+ 27   000214_F1_original.png    0.062    1   16   18
+ 28   000325_F1_original.png    0.062    1   16   16
+ 29   000382_F1_original.png    0.062    1   16   13
+ 30   000276_F1_original.png    0.059    1   17   15
+ 31   000019_F1_original.png    0.056    1   18   19
+ 32   000141_F1_original.png    0.056    1   18   13
+ 33   000339_F1_original.png    0.056    1   18   15
+ 34   000368_F1_original.png    0.056    1   18   18
+ 35   000119_F1_original.png    0.053    1   19   12
+ 36   000057_F1_original.png    0.050    1   20   19
+ 37   000352_F1_original.png    0.050    1   20   19
+ 38   000279_F1_original.png    0.045    1   22   20
+ 39   000348_F1_original.png    0.043    1   23   19
+ 40   000202_F1_original.png    0.042    2   48   38
+ 41   000178_F1_original.png    0.040    1   25   23
+ 42   000159_F1_original.png    0.039    2   51   41
+ 43   000157_F1_original.png    0.038    1   26   19
+ 44   000357_F1_original.png    0.038    1   26   20
+ 45   000353_F1_original.png    0.037    4  108   70
+ 46   000049_F1_original.png    0.034    1   29   19
+ 47   000189_F1_original.png    0.033    1   30   21
+ 48   000366_F1_original.png    0.032    1   31   24
+ 49   000113_F1_original.png    0.031    1   32   29
+ 50   000236_F1_original.png    0.031    1   32   13
+
+============================================================
+SUMMARY:
+Total images processed: 400
+Average recall in top 50: 9.1%
+
+RECALL DISTRIBUTION:
+0.0-0.2: 46 images
+0.2-0.4: 4 images
+0.4-0.6: 0 images
+0.6-0.8: 0 images
+0.8-1.0: 0 images

@@ -1,0 +1,11 @@
+# YOLO Data Configuration for SageMaker
+path: /opt/ml/input/data/training  # SageMaker data channel
+train: train/images
+val: val/images
+
+# Classes
+nc: 1
+names: ['room']
+
+# Detection task (using bounding boxes)
+task: detect

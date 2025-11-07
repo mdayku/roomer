@@ -20,12 +20,12 @@ def check_credentials():
     # Check .env file
     env_file = Path('.env')
     if env_file.exists():
-        print(f"✅ .env file found: {env_file}")
+        print(f"[OK] .env file found: {env_file}")
         # Check if .env has AWS vars
         with open(env_file, 'r') as f:
             content = f.read()
             if 'AWS_ACCESS_KEY_ID' in content and 'AWS_SECRET_ACCESS_KEY' in content:
-                print("✅ AWS credentials found in .env file")
+                print("[OK] AWS credentials found in .env file")
                 return True
 
     # Check environment variables (includes .env loaded ones)
@@ -34,21 +34,21 @@ def check_credentials():
 
     if env_set:
         source = ".env file" if env_file.exists() else "environment variables"
-        print(f"✅ AWS credentials set via {source}")
+        print(f"[OK] AWS credentials set via {source}")
         return True
 
     # Check AWS credentials file
     creds_file = Path.home() / '.aws' / 'credentials'
     if creds_file.exists():
-        print(f"✅ AWS credentials file found: {creds_file}")
+        print(f"[OK] AWS credentials file found: {creds_file}")
         return True
 
-    print("⚠️ No AWS credentials found")
+    print("[WARN] No AWS credentials found")
     return False
 
 def test_aws_access():
     """Test access to required AWS services"""
-    print("🔐 Testing AWS service access...")
+    print("Testing AWS service access...")
 
     try:
         # Test STS (basic AWS access)
@@ -56,34 +56,34 @@ def test_aws_access():
         identity = sts.get_caller_identity()
         account_id = identity['Account']
         user_arn = identity['Arn']
-        print(f"✅ AWS Account: {account_id}")
-        print(f"✅ User/Role: {user_arn.split('/')[-1]}")
+        print(f"[OK] AWS Account: {account_id}")
+        print(f"[OK] User/Role: {user_arn.split('/')[-1]}")
 
         # Test SageMaker
         sm = boto3.client('sagemaker')
-        print("✅ SageMaker access confirmed")
+        print("[OK] SageMaker access confirmed")
 
         # Test S3
         s3 = boto3.client('s3')
-        print("✅ S3 access confirmed")
+        print("[OK] S3 access confirmed")
 
         # Test IAM (for role creation)
         iam = boto3.client('iam')
-        print("✅ IAM access confirmed")
+        print("[OK] IAM access confirmed")
 
         # Test CloudWatch (for logging)
         cw = boto3.client('logs')
-        print("✅ CloudWatch access confirmed")
+        print("[OK] CloudWatch access confirmed")
 
         return True
 
     except Exception as e:
-        print(f"❌ AWS access failed: {e}")
+        print(f"[ERROR] AWS access failed: {e}")
         return False
 
 def check_permissions():
     """Check specific permissions needed"""
-    print("🔒 Checking specific permissions...")
+    print("Checking specific permissions...")
 
     issues = []
 
@@ -91,7 +91,7 @@ def check_permissions():
         # Check SageMaker permissions
         sm = boto3.client('sagemaker')
         sm.list_training_jobs(MaxResults=1)
-        print("✅ SageMaker training permissions")
+        print("[OK] SageMaker training permissions")
     except:
         issues.append("SageMaker training permissions")
 
@@ -100,7 +100,7 @@ def check_permissions():
         s3 = boto3.client('s3')
         # Try to list buckets (basic permission)
         s3.list_buckets()
-        print("✅ S3 permissions")
+        print("[OK] S3 permissions")
     except:
         issues.append("S3 permissions")
 
@@ -108,15 +108,15 @@ def check_permissions():
         # Check IAM permissions
         iam = boto3.client('iam')
         iam.list_roles(MaxItems=1)
-        print("✅ IAM permissions")
+        print("[OK] IAM permissions")
     except:
         issues.append("IAM permissions")
 
     if issues:
-        print(f"⚠️ Permission issues: {', '.join(issues)}")
+        print(f"[WARN] Permission issues: {', '.join(issues)}")
         return False
 
-    print("✅ All required permissions confirmed")
+    print("[OK] All required permissions confirmed")
     return True
 
 def provide_setup_instructions():
@@ -177,14 +177,14 @@ def main():
     try:
         import boto3
     except ImportError:
-        print("❌ boto3 not installed. Run: pip install boto3")
+        print("[ERROR] boto3 not installed. Run: pip install boto3")
         sys.exit(1)
 
     # Check credentials from all sources
     creds_ok = check_credentials()
 
     if not creds_ok:
-        print("\n❌ No AWS credentials found")
+        print("\n[ERROR] No AWS credentials found")
         provide_setup_instructions()
         sys.exit(1)
 
@@ -192,7 +192,7 @@ def main():
     access_ok = test_aws_access()
 
     if not access_ok:
-        print("\n❌ AWS access test failed")
+        print("\n[ERROR] AWS access test failed")
         provide_setup_instructions()
         sys.exit(1)
 

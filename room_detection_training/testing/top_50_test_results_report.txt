@@ -1,0 +1,75 @@
+================================================================================
+TOP 50 TEST IMAGES - RANKED BY WEIGHTED RECALL-CONFIDENCE SCORE
+================================================================================
+
+Metric: weighted_score = (TP / (TP + FN)) × mean_TP_confidence
+Higher scores = Better recall with higher confidence in correct detections
+
+Total test images evaluated: 400
+Report generated: C:\Users\marcu\Roomer\room_detection_training
+
+------------------------------------------------------------------------------------------
+Rank Image Name                GT  Det Recall TP Conf Score   
+------------------------------------------------------------------------------------------
+1    000322_F1_original.png    28  22  0.357  0.573   0.205   
+2    000343_F1_original.png    19  19  0.263  0.679   0.179   
+3    000100_F1_original.png    8   13  0.250  0.601   0.150   
+4    000205_F1_original.png    28  24  0.179  0.673   0.120   
+5    000007_F1_original.png    14  17  0.143  0.773   0.110   
+6    000361_F1_original.png    13  13  0.154  0.710   0.109   
+7    000226_F1_original.png    37  24  0.216  0.492   0.106   
+8    000099_F1_original.png    19  21  0.158  0.650   0.103   
+9    000115_F1_original.png    19  13  0.105  0.833   0.088   
+10   000336_F1_original.png    21  21  0.143  0.591   0.084   
+11   000254_F1_original.png    16  16  0.125  0.610   0.076   
+12   000341_F1_original.png    23  19  0.130  0.561   0.073   
+13   000364_F1_original.png    21  18  0.143  0.511   0.073   
+14   000274_F1_original.png    18  15  0.111  0.569   0.063   
+15   000104_F1_original.png    12  15  0.083  0.726   0.061   
+16   000165_F1_original.png    13  15  0.077  0.760   0.058   
+17   000129_F1_original.png    20  21  0.100  0.583   0.058   
+18   000209_F1_original.png    25  20  0.080  0.656   0.053   
+19   000051_F1_original.png    15  16  0.067  0.775   0.052   
+20   000272_F1_original.png    30  23  0.067  0.759   0.051   
+21   000020_F1_original.png    16  16  0.125  0.389   0.049   
+22   000382_F1_original.png    16  13  0.062  0.777   0.049   
+23   000174_F1_original.png    16  12  0.062  0.755   0.047   
+24   000368_F1_original.png    18  18  0.056  0.836   0.046   
+25   000339_F1_original.png    18  15  0.056  0.759   0.042   
+26   000119_F1_original.png    19  12  0.053  0.759   0.040   
+27   000308_F1_original.png    14  13  0.071  0.551   0.039   
+28   000057_F1_original.png    20  19  0.050  0.776   0.039   
+29   000141_F1_original.png    18  13  0.056  0.689   0.038   
+30   000017_F1_original.png    14  12  0.071  0.511   0.037   
+31   000006_F1_original.png    30  22  0.067  0.545   0.036   
+32   000002_F1_original.png    23  20  0.087  0.407   0.035   
+33   000019_F1_original.png    18  19  0.056  0.583   0.032   
+34   000352_F1_original.png    20  19  0.050  0.635   0.032   
+35   000279_F1_original.png    22  20  0.045  0.638   0.029   
+36   000214_F1_original.png    16  18  0.062  0.459   0.029   
+37   000276_F1_original.png    17  15  0.059  0.475   0.028   
+38   000357_F1_original.png    26  20  0.038  0.718   0.028   
+39   000325_F1_original.png    16  16  0.062  0.423   0.026   
+40   000348_F1_original.png    23  19  0.043  0.606   0.026   
+41   000113_F1_original.png    32  29  0.031  0.802   0.025   
+42   000178_F1_original.png    25  23  0.040  0.610   0.024   
+43   000157_F1_original.png    26  19  0.038  0.632   0.024   
+44   000202_F1_original.png    48  38  0.042  0.576   0.024   
+45   000236_F1_original.png    32  13  0.031  0.738   0.023   
+46   000353_F1_original.png    108 70  0.037  0.590   0.022   
+47   000133_F1_original.png    38  30  0.026  0.827   0.022   
+48   000278_F1_original.png    36  27  0.028  0.771   0.021   
+49   000013_F1_original.png    34  23  0.029  0.693   0.020   
+50   000260_F1_original.png    35  26  0.029  0.672   0.019   
+------------------------------------------------------------------------------------------
+
+SUMMARY STATISTICS:
+Average weighted score across all images: 0.007
+Average recall across all images: 0.012
+Average TP confidence across all images: 0.634
+Top 50 average score: 0.057
+Score range in top 50: 0.205 - 0.019
+
+BEST RECALL: 000322_F1_original.png (35.7% recall)
+BEST TP CONFIDENCE: 000368_F1_original.png (avg conf: 0.836)
+BEST WEIGHTED SCORE: 000322_F1_original.png (score: 0.205)
