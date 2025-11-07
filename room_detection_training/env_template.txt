@@ -14,4 +14,15 @@ AWS_DEFAULT_REGION=us-east-1
 # 1. Copy this file to .env: cp env_template.txt .env
 # 2. Replace YOUR_ACCESS_KEY_HERE and YOUR_SECRET_KEY_HERE with actual values
 # 3. Run: python check_aws.py to verify
+# 4. Run: python start_training.py to start training
+#
+# If you don't have these credentials, ask the Gauntlet AI team for:
+# - AWS Access Key ID
+# - AWS Secret Access Key
+# - IAM user with SageMaker permissions
+
+# Instructions:
+# 1. Copy this file to .env: cp env_template.txt .env
+# 2. Replace YOUR_ACCESS_KEY_HERE and YOUR_SECRET_KEY_HERE with actual values
+# 3. Run: python check_aws.py to verify
 # 4. Run: python sagemaker_train.py to start training

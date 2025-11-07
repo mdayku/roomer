@@ -19,18 +19,25 @@ load_dotenv()
 def main():
     print("Starting YOLO Training on AWS SageMaker")
     print("=" * 50)
+    print("DEBUG: Script started")
 
     # Check AWS access
+    print("DEBUG: Testing AWS access...")
     try:
+        print("DEBUG: Creating STS client...")
         sts = boto3.client('sts')
+        print("DEBUG: Calling get_caller_identity...")
         identity = sts.get_caller_identity()
         account_id = identity['Account']
         print(f"AWS Account: {account_id}")
 
         # Test services
+        print("DEBUG: Creating SageMaker client...")
         sagemaker_client = boto3.client('sagemaker')
+        print("DEBUG: Creating S3 client...")
         s3_client = boto3.client('s3')
         print("AWS services accessible")
+        print("DEBUG: AWS access test completed")
 
     except Exception as e:
         print(f"AWS access failed: {e}")
@@ -38,11 +45,14 @@ def main():
         return
 
     # Get SageMaker session
+    print("DEBUG: Creating SageMaker session...")
     sess = sagemaker.Session()
     bucket = sess.default_bucket()
     print(f"Using S3 bucket: {bucket}")
+    print("DEBUG: SageMaker session created")
 
     # Get or create IAM role
+    print("DEBUG: Setting up IAM role...")
     iam = boto3.client('iam')
     role_name = 'room-detection-sagemaker-role'
 
@@ -97,13 +107,26 @@ def main():
         print(f"Failed to get IAM role: {e}")
         return
 
-    # Training configuration - simplified for testing
+    # Training configuration - matching what worked locally
     hyperparameters = {
-        'epochs': 10,  # Start small for testing
-        'batch_size': 4,  # Smaller batch size
-        'imgsz': 416,  # Smaller images for testing
+        'epochs': 50,  # Full training run
+        'batch_size': 16,  # Larger batch for cloud GPU
+        'imgsz': 640,  # Standard YOLO size (local used 320 for testing)
         'data': 'data.yaml',
-        'weights': 'yolov8s-seg.pt',
+        'weights': 'yolov8s.pt',
+        # Additional parameters that worked locally
+        'workers': 8,  # More workers for cloud instance
+        'patience': 10,  # Early stopping patience
+        'save_period': 10,  # Save checkpoints every 10 epochs
+        'optimizer': 'AdamW',  # Optimizer from local run
+        'lr0': 0.01,  # Learning rate from local run
+        'lrf': 0.01,  # Final learning rate
+        'momentum': 0.937,  # Momentum
+        'weight_decay': 0.0005,  # Weight decay
+        'warmup_epochs': 3.0,  # Warmup epochs
+        'box': 7.5,  # Box loss gain
+        'cls': 0.5,  # Classification loss gain
+        'dfl': 1.5,  # DFL loss gain
     }
 
     # Create training job
@@ -120,7 +143,7 @@ def main():
         hyperparameters=hyperparameters,
         use_spot_instances=True,
         max_wait=86400,  # 24 hours
-        max_run=3600,    # 1 hour training time
+        max_run=14400,   # 4 hours training time (for 50 epochs)
     )
 
     # Check for pre-processed YOLO data
@@ -137,10 +160,12 @@ def main():
     # Verify dataset integrity
     train_images = len(list(yolo_data_dir.glob("train/images/*.png")))
     val_images = len(list(yolo_data_dir.glob("val/images/*.png")))
+    test_images = len(list(yolo_data_dir.glob("test/images/*.png")))
     train_labels = len(list(yolo_data_dir.glob("train/labels/*.txt")))
     val_labels = len(list(yolo_data_dir.glob("val/labels/*.txt")))
+    test_labels = len(list(yolo_data_dir.glob("test/labels/*.txt")))
 
-    print(f"Dataset stats: Train={train_images} images/{train_labels} labels, Val={val_images} images/{val_labels} labels")
+    print(f"Dataset stats: Train={train_images} images/{train_labels} labels, Val={val_images} images/{val_labels} labels, Test={test_images} images/{test_labels} labels")
 
     if train_images == 0 or val_images == 0:
         print("❌ ERROR: No images found in dataset!")
@@ -152,8 +177,9 @@ def main():
     # Create SageMaker data.yaml
     sagemaker_data_yaml = """# YOLO Data Configuration for SageMaker
 path: /opt/ml/input/data/training  # SageMaker data dir
-train: images/train  # train images (relative to 'path')
-val: images/val  # val images (relative to 'path')
+train: train/images  # train images (relative to 'path')
+val: val/images  # val images (relative to 'path')
+test: test/images  # test images (relative to 'path')
 
 # Classes
 nc: 1  # number of classes
@@ -197,12 +223,12 @@ task: segment
     print(f"[SUCCESS] Uploaded {uploaded_count} files to S3")
 
     # Download and upload YOLO weights
-    weights_path = yolo_data_dir / "yolov8s-seg.pt"
+    weights_path = yolo_data_dir / "yolov8s.pt"
     if not weights_path.exists():
         print("Downloading YOLO weights...")
         try:
             import urllib.request
-            weights_url = "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s-seg.pt"
+            weights_url = "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s.pt"
             urllib.request.urlretrieve(weights_url, str(weights_path))
             print("Weights downloaded")
         except Exception as e:
@@ -210,7 +236,7 @@ task: segment
             return
 
     # Upload weights
-    s3_key = f"{s3_prefix}/yolov8s-seg.pt"
+    s3_key = f"{s3_prefix}/yolov8s.pt"
     s3_client.upload_file(str(weights_path), bucket, s3_key)
     print("[SUCCESS] Weights uploaded")
 
@@ -218,7 +244,7 @@ task: segment
     print(f"[SUCCESS] Data uploaded to {training_data_path}")
 
     print("Launching training job...")
-    print("This will take 2-4 hours")
+    print("This will take 3-5 hours (50 epochs)")
     print("Check AWS SageMaker console for progress")
 
     # Start training with unique name
@@ -234,8 +260,8 @@ task: segment
 
     print(f"Training job started: {job_name}")
     print("Monitor at: https://us-east-1.console.aws.amazon.com/sagemaker/home")
-    print("Estimated cost: $1-3 (with spot pricing - G5 upgrade!)")
-    print("Estimated time: 1-2 hours (G5 is faster!)")
+    print("Estimated cost: $3-5 (with spot pricing - full training run)")
+    print("Estimated time: 3-5 hours (50 epochs on G5 A10G GPU)")
 
 if __name__ == "__main__":
     main()

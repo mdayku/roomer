@@ -213,7 +213,7 @@ for (const img of coco.images) {
     try {
       let ring: Position[] | null = null;
       
-      // case 1: polygon(s)
+    // case 1: polygon(s)
       if (ann.segmentation && Array.isArray(ann.segmentation)) {
         const segs = Array.isArray(ann.segmentation[0]) 
           ? (ann.segmentation as number[][]) 
@@ -222,14 +222,14 @@ for (const img of coco.images) {
           if (seg.length < 6) continue; // Need at least 3 points (x,y pairs)
           ring = cocoPolyToRing(seg);
           break; // Use first valid polygon
-        }
       }
-      // case 2: RLE
+    }
+    // case 2: RLE
       else if (ann.segmentation && typeof ann.segmentation === 'object' && 'size' in ann.segmentation) {
-        const rle = ann.segmentation as {counts:number[]|string; size:[number,number]};
+      const rle = ann.segmentation as {counts:number[]|string; size:[number,number]};
         try {
-          const mask = rleDecode(rle);
-          const polys = maskToPolygons(mask, rle.size[1], rle.size[0]); // note size = [h,w]
+      const mask = rleDecode(rle);
+      const polys = maskToPolygons(mask, rle.size[1], rle.size[0]); // note size = [h,w]
           if (polys.length > 0) {
             ring = polys[0]; // Use first polygon
           }
@@ -283,8 +283,8 @@ for (const img of coco.images) {
       }
     } catch (err) {
       console.warn(`Warning: Failed to process annotation ${ann.id} for image ${img.id}:`, err);
+      }
     }
-  }
   
   const fc: FeatureCollection = {
     type: 'FeatureCollection',

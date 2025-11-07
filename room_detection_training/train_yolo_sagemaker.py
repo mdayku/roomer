@@ -46,14 +46,27 @@ def main():
 
         # Parse arguments
         parser = argparse.ArgumentParser()
-        parser.add_argument('--epochs', type=int, default=10)  # Start small for testing
-        parser.add_argument('--batch-size', type=int, default=4)  # Smaller batch
-        parser.add_argument('--imgsz', type=int, default=416)  # Smaller images
+        parser.add_argument('--epochs', type=int, default=50)
+        parser.add_argument('--batch-size', type=int, default=16)
+        parser.add_argument('--imgsz', type=int, default=640)
         parser.add_argument('--data', type=str, default='data.yaml')
-        parser.add_argument('--weights', type=str, default='yolov8s-seg.pt')
+        parser.add_argument('--weights', type=str, default='yolov8s.pt')
+        parser.add_argument('--workers', type=int, default=8)
+        parser.add_argument('--patience', type=int, default=10)
+        parser.add_argument('--save-period', type=int, default=10)
+        parser.add_argument('--optimizer', type=str, default='AdamW')
+        parser.add_argument('--lr0', type=float, default=0.01)
+        parser.add_argument('--lrf', type=float, default=0.01)
+        parser.add_argument('--momentum', type=float, default=0.937)
+        parser.add_argument('--weight-decay', type=float, default=0.0005)
+        parser.add_argument('--warmup-epochs', type=float, default=3.0)
+        parser.add_argument('--box', type=float, default=7.5)
+        parser.add_argument('--cls', type=float, default=0.5)
+        parser.add_argument('--dfl', type=float, default=1.5)
         args = parser.parse_args()
 
-        print(f"\n3. Training config: {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}")
+        print(f"\n3. Training config: {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}, workers {args.workers}")
+        print("Model: YOLOv8s Detection (bounding boxes)")
 
         # Check data path
         print("\n4. Checking data paths...")
@@ -88,11 +101,21 @@ def main():
             batch=args.batch_size,
             imgsz=args.imgsz,
             device=device,
-            workers=2,  # Minimal workers
+            workers=args.workers,
             project='/opt/ml/model',
             name='room_detection',
             save=True,
-            patience=5,  # Shorter patience
+            save_period=args.save_period,
+            patience=args.patience,
+            optimizer=args.optimizer,
+            lr0=args.lr0,
+            lrf=args.lrf,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+            warmup_epochs=args.warmup_epochs,
+            box=args.box,
+            cls=args.cls,
+            dfl=args.dfl,
         )
 
         print("Training completed successfully!")
