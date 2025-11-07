@@ -38,8 +38,8 @@ backend:
 # Environment variables - Add your AWS config here
 env:
   NODE_ENV: production
-  REACT_APP_USER_POOL_ID=us-east-1_3vrRvzQp4
-  REACT_APP_USER_POOL_CLIENT_ID=3t2ef0fs5nlafeuau74ar3am0l
-  REACT_APP_AWS_REGION=us-east-1
-  REACT_APP_API_ENDPOINT=https://qhhfso7u0h.execute-api.us-east-1.amazonaws.com/prod
-  REACT_APP_S3_BUCKET=sagemaker-us-east-1-971422717446
+  REACT_APP_USER_POOL_ID: us-east-1_3vrRvzQp4
+  REACT_APP_USER_POOL_CLIENT_ID: 3t2ef0fs5nlafeuau74ar3am0l
+  REACT_APP_AWS_REGION: us-east-1
+  REACT_APP_API_ENDPOINT: https://qhhfso7u0h.execute-api.us-east-1.amazonaws.com/prod
+  REACT_APP_S3_BUCKET: sagemaker-us-east-1-971422717446
