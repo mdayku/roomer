@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import type { FeatureCollection } from '../types/geo';
+import type { FeatureCollection, Feature } from '../types/geo';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

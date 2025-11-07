@@ -166,6 +166,10 @@ for model_path in model_paths:
         # Process predictions in confidence order (highest first)
         sorted_preds = sorted(preds, key=lambda p: float(p.conf[0]), reverse=True)
 
+        # First pass: match predictions to ground truth
+        temp_tp_boxes = []
+        temp_fp_boxes = []
+
         for pred in sorted_preds:
             box = pred.xyxy[0]  # [x1,y1,x2,y2] in original pixel coords
             conf = float(pred.conf[0])
@@ -185,34 +189,80 @@ for model_path in model_paths:
             if best_iou >= IoU_TH and best_gt_idx != -1:
                 # True Positive
                 matched_gt.add(best_gt_idx)
-                tp_boxes.append((box, conf))
-
-                # Add to results
-                bx = metrics(box.tolist(), img_area)
-                gx = metrics(gt_boxes[best_gt_idx].tolist(), img_area)
-                rows.append({
-                    "image": img_name,
-                    "pred_confidence": conf,
-                    "pred_bbox": box.tolist(),
-                    "gt_bbox": gt_boxes[best_gt_idx].tolist(),
-                    "iou": best_iou,
-                    "match_type": "TP",
-                    "pred_area": bx[4], "pred_pct": bx[5],
-                    "gt_area": gx[4], "gt_pct": gx[5]
-                })
+                temp_tp_boxes.append((box, conf, best_gt_idx, best_iou))
             else:
                 # False Positive
-                bx = metrics(box.tolist(), img_area)
-                rows.append({
-                    "image": img_name,
-                    "pred_confidence": conf,
-                    "pred_bbox": box.tolist(),
-                    "gt_bbox": None,
-                    "iou": 0.0,
-                    "match_type": "FP",
-                    "pred_area": bx[4], "pred_pct": bx[5],
-                    "gt_area": None, "gt_pct": None
-                })
+                temp_fp_boxes.append((box, conf))
+
+        # === IoU OVERLAP SUPPRESSION ===
+
+        # Suppress overlapping TPs (>20% IoU) - keep higher confidence
+        tp_boxes = []
+        temp_tp_boxes.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence descending
+
+        for i, (box, conf, gt_idx, iou_val) in enumerate(temp_tp_boxes):
+            should_keep = True
+            for kept_box, _, _, _ in tp_boxes:
+                if iou_tensor(box, kept_box) > 0.20:  # 20% IoU threshold for TPs
+                    should_keep = False
+                    break
+            if should_keep:
+                tp_boxes.append((box, conf, gt_idx, iou_val))
+
+        # Suppress FPs that overlap with TPs (>10% IoU)
+        filtered_fp_boxes = []
+        for fp_box, fp_conf in temp_fp_boxes:
+            should_keep = True
+            for tp_box, _, _, _ in tp_boxes:
+                if iou_tensor(fp_box, tp_box) > 0.10:  # 10% IoU threshold for FP vs TP
+                    should_keep = False
+                    break
+            if should_keep:
+                filtered_fp_boxes.append((fp_box, fp_conf))
+
+        # Suppress overlapping FPs (>20% IoU) - keep higher confidence
+        fp_boxes = []
+        filtered_fp_boxes.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence descending
+
+        for i, (box, conf) in enumerate(filtered_fp_boxes):
+            should_keep = True
+            for kept_box, _ in fp_boxes:
+                if iou_tensor(box, kept_box) > 0.20:  # 20% IoU threshold for FPs
+                    should_keep = False
+                    break
+            if should_keep:
+                fp_boxes.append((box, conf))
+
+        # === GENERATE FINAL RESULTS ===
+
+        # Add TP results
+        for box, conf, gt_idx, iou_val in tp_boxes:
+            bx = metrics(box.tolist(), img_area)
+            gx = metrics(gt_boxes[gt_idx].tolist(), img_area)
+            rows.append({
+                "image": img_name,
+                "pred_confidence": conf,
+                "pred_bbox": box.tolist(),
+                "gt_bbox": gt_boxes[gt_idx].tolist(),
+                "iou": iou_val,
+                "match_type": "TP",
+                "pred_area": bx[4], "pred_pct": bx[5],
+                "gt_area": gx[4], "gt_pct": gx[5]
+            })
+
+        # Add FP results
+        for box, conf in fp_boxes:
+            bx = metrics(box.tolist(), img_area)
+            rows.append({
+                "image": img_name,
+                "pred_confidence": conf,
+                "pred_bbox": box.tolist(),
+                "gt_bbox": None,
+                "iou": 0.0,
+                "match_type": "FP",
+                "pred_area": bx[4], "pred_pct": bx[5],
+                "gt_area": None, "gt_pct": None
+            })
 
         # False Negatives (unmatched ground truth)
         for gt_idx, gt_box in enumerate(gt_boxes):
@@ -244,7 +294,7 @@ for model_path in model_paths:
         scale_y = VID_H / ih
 
         # Draw True Positives (Green)
-        for box, conf in tp_boxes:
+        for box, conf, _, _ in tp_boxes:
             x1, y1, x2, y2 = box.tolist()
             X1, Y1 = int(x1 * scale_x), int(y1 * scale_y)
             X2, Y2 = int(x2 * scale_x), int(y2 * scale_y)
@@ -253,16 +303,13 @@ for model_path in model_paths:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLORS["TP"], 1)
 
         # Draw False Positives (Red) - predictions not matched to GT
-        for pred in sorted_preds:
-            if pred not in [p for p, _ in tp_boxes]:  # Not a TP
-                box = pred.xyxy[0]
-                conf = float(pred.conf[0])
-                x1, y1, x2, y2 = box.tolist()
-                X1, Y1 = int(x1 * scale_x), int(y1 * scale_y)
-                X2, Y2 = int(x2 * scale_x), int(y2 * scale_y)
-                cv2.rectangle(frame_out, (X1, Y1), (X2, Y2), COLORS["FP"], THICK)
-                cv2.putText(frame_out, f"FP {conf:.2f}", (X1, max(Y1-5, 15)),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLORS["FP"], 1)
+        for box, conf in fp_boxes:
+            x1, y1, x2, y2 = box.tolist()
+            X1, Y1 = int(x1 * scale_x), int(y1 * scale_y)
+            X2, Y2 = int(x2 * scale_x), int(y2 * scale_y)
+            cv2.rectangle(frame_out, (X1, Y1), (X2, Y2), COLORS["FP"], THICK)
+            cv2.putText(frame_out, f"FP {conf:.2f}", (X1, max(Y1-5, 15)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLORS["FP"], 1)
 
         # Draw False Negatives (Blue dotted) - unmatched GT
         for gt_idx, gt_box in enumerate(gt_boxes):
@@ -341,7 +388,14 @@ summary_df = pd.DataFrame(summary_rows)
 summary_csv = output_dir / f"summary_{batch_tag}.csv"
 summary_df.to_csv(summary_csv, index=False, float_format='%.4f')
 
-print(f"📊 Summary saved: {summary_csv.name}")
+    print(f"📊 Summary saved: {summary_csv.name}")
+
+# === CREATE TOP 10 IMAGES PDF ===
+
+    print("📄 Creating top 10 images PDF...")
+    create_top_10_pdf(model, summary_df, output_dir, batch_tag)
+
+    print(f"📄 Top 10 images PDF saved")
 
 # === CREATE VISUALIZATIONS ===
 
@@ -404,6 +458,106 @@ if best_csv.exists():
     plt.close()
 
     print(f"📊 Recall distribution plot saved: {recall_plot.name}")
+
+def create_top_10_pdf(model, summary_df, output_dir, batch_tag):
+    """Create PDF with top 10 images by recall showing predictions"""
+    from matplotlib.backends.backend_pdf import PdfPages
+    import matplotlib.patches as patches
+
+    # Load predictions and calculate per-image recall
+    csv_path = output_dir / f"predictions_{summary_df.iloc[0]['model']}.csv"
+    df = pd.read_csv(csv_path)
+
+    # Calculate per-image metrics
+    image_stats = []
+    for img_name in df['image'].unique():
+        img_df = df[df['image'] == img_name]
+        tp = (img_df['match_type'] == 'TP').sum()
+        fn = (img_df['match_type'] == 'FN').sum()
+        fp = (img_df['match_type'] == 'FP').sum()
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        gt_rooms = len(img_df[img_df['match_type'] == 'FN']) + tp
+
+        image_stats.append({
+            'image': img_name,
+            'recall': recall,
+            'tp': tp,
+            'fp': fp,
+            'fn': fn,
+            'gt_rooms': gt_rooms
+        })
+
+    # Sort by recall and get top 10
+    image_stats.sort(key=lambda x: x['recall'], reverse=True)
+    top_10 = image_stats[:10]
+
+    # Create PDF
+    pdf_path = output_dir / f"top_10_images_{batch_tag}.pdf"
+
+    with PdfPages(str(pdf_path)) as pdf:
+        for i, img_stat in enumerate(top_10):
+            img_name = img_stat['image']
+            img_path = test_images_dir / img_name
+
+            # Load image
+            img = cv2.imread(str(img_path))
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            # Get predictions for this image
+            img_df = df[df['image'] == img_name]
+
+            # Create figure
+            fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+            ax.imshow(img)
+            ax.axis('off')
+
+            # Draw predictions
+            for _, row in img_df.iterrows():
+                if row['match_type'] == 'TP':
+                    color = 'lime'
+                    label = f"TP {row['pred_confidence']:.2f}"
+                elif row['match_type'] == 'FP':
+                    color = 'red'
+                    label = f"FP {row['pred_confidence']:.2f}"
+                elif row['match_type'] == 'FN':
+                    # Draw FN as dotted rectangle
+                    if pd.notna(row['gt_bbox']):
+                        gt_box = eval(row['gt_bbox'])
+                        x1, y1, x2, y2 = gt_box
+                        # Draw dotted rectangle for FN
+                        for offset in range(0, int(x2-x1), 10):
+                            ax.plot([x1+offset, min(x1+offset+5, x2)], [y1, y1], color='yellow', linewidth=2)
+                            ax.plot([x1+offset, min(x1+offset+5, x2)], [y2, y2], color='yellow', linewidth=2)
+                        for offset in range(0, int(y2-y1), 10):
+                            ax.plot([x1, x1], [y1+offset, min(y1+offset+5, y2)], color='yellow', linewidth=2)
+                            ax.plot([x2, x2], [y1+offset, min(y1+offset+5, y2)], color='yellow', linewidth=2)
+                        ax.text(x1, y1-10, "FN", bbox=dict(facecolor='yellow', alpha=0.8), fontsize=8, color='black')
+                    continue
+                else:
+                    continue
+
+                # Draw TP and FP boxes
+                if pd.notna(row['pred_bbox']):
+                    pred_box = eval(row['pred_bbox'])
+                    x1, y1, x2, y2 = pred_box
+                    rect = patches.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=2, edgecolor=color, facecolor='none')
+                    ax.add_patch(rect)
+                    ax.text(x1, y1-10, label, bbox=dict(facecolor=color, alpha=0.8), fontsize=8, color='white')
+
+            # Add title with metrics
+            title = f"Top {i+1}: {img_name}\nRecall: {img_stat['recall']:.1%} | TP: {img_stat['tp']} | FP: {img_stat['fp']} | FN: {img_stat['fn']} | GT Rooms: {img_stat['gt_rooms']}"
+            ax.set_title(title, fontsize=12, pad=20)
+
+            # Add legend
+            legend_text = "Legend:\n• Green: True Positives\n• Red: False Positives\n• Yellow Dotted: False Negatives"
+            ax.text(0.02, 0.98, legend_text, transform=ax.transAxes, fontsize=10,
+                   verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
+
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches='tight', dpi=150)
+            plt.close()
+
+    return pdf_path
 
 # Print final summary
 print(f"\n🎉 Testing completed in {time.time() - start_time:.1f} seconds!")
