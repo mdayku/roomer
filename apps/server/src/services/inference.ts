@@ -37,9 +37,9 @@ class RoomDetectionInference {
 
       // Fallback to mock results
       console.log('Falling back to mock detection');
-      const mockFeatures = [
+      const mockFeatures: Feature[] = [
         {
-          type: 'Feature',
+          type: 'Feature' as const,
           properties: {
             id: 'room_001',
             name_hint: 'Living Room',
@@ -47,12 +47,12 @@ class RoomDetectionInference {
             bbox_norm: [0.1, 0.1, 0.4, 0.3]
           },
           geometry: {
-            type: 'Polygon',
+            type: 'Polygon' as const,
             coordinates: [[[0.1, 0.1], [0.4, 0.1], [0.4, 0.3], [0.1, 0.3], [0.1, 0.1]]]
           }
         },
         {
-          type: 'Feature',
+          type: 'Feature' as const,
           properties: {
             id: 'room_002',
             name_hint: 'Kitchen',
@@ -60,7 +60,7 @@ class RoomDetectionInference {
             bbox_norm: [0.5, 0.1, 0.8, 0.4]
           },
           geometry: {
-            type: 'Polygon',
+            type: 'Polygon' as const,
             coordinates: [[[0.5, 0.1], [0.8, 0.1], [0.8, 0.4], [0.5, 0.4], [0.5, 0.1]]]
           }
         }
