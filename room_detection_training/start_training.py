@@ -123,33 +123,31 @@ def main():
         max_run=3600,    # 1 hour training time
     )
 
-    # Prepare and upload training data
-    print("Preparing training data...")
+    # Check for pre-processed YOLO data
+    print("Checking for YOLO dataset...")
     yolo_data_dir = Path("./yolo_data")
 
-    # Convert COCO to YOLO format if not already done
-    if not yolo_data_dir.exists():
-        print("Converting COCO data to YOLO format...")
-        # Import here to avoid issues if not needed
-        sys.path.append('.')
-        try:
-            from train_yolo import convert_coco_to_yolo_format, create_data_yaml
-            convert_coco_to_yolo_format(
-                "../room_detection_dataset_coco/train/annotations.json",
-                yolo_data_dir / "train"
-            )
-            convert_coco_to_yolo_format(
-                "../room_detection_dataset_coco/val/annotations.json",
-                yolo_data_dir / "val"
-            )
-            create_data_yaml(yolo_data_dir / "train", yolo_data_dir / "val", yolo_data_dir / "data.yaml")
-            print("Data conversion completed")
-        except Exception as e:
-            print(f"Data conversion failed: {e}")
-            return
+    if not yolo_data_dir.exists() or not (yolo_data_dir / "data.yaml").exists():
+        print("❌ ERROR: YOLO dataset not found!")
+        print("Please run the preprocessing script first:")
+        print("  cd room_detection_training")
+        print("  python prepare_yolo_data.py --coco-train ../room_detection_dataset_coco/train/annotations.json --coco-val ../room_detection_dataset_coco/val/annotations.json --output-dir ./yolo_data")
+        return
+
+    # Verify dataset integrity
+    train_images = len(list(yolo_data_dir.glob("train/images/*.png")))
+    val_images = len(list(yolo_data_dir.glob("val/images/*.png")))
+    train_labels = len(list(yolo_data_dir.glob("train/labels/*.txt")))
+    val_labels = len(list(yolo_data_dir.glob("val/labels/*.txt")))
+
+    print(f"Dataset stats: Train={train_images} images/{train_labels} labels, Val={val_images} images/{val_labels} labels")
+
+    if train_images == 0 or val_images == 0:
+        print("❌ ERROR: No images found in dataset!")
+        return
 
     # Create SageMaker-compatible data structure and upload
-    print("Creating SageMaker data structure...")
+    print("Uploading YOLO dataset to S3...")
 
     # Create SageMaker data.yaml
     sagemaker_data_yaml = """# YOLO Data Configuration for SageMaker
@@ -166,7 +164,6 @@ task: segment
 """
 
     # Upload data to S3
-    print("Uploading data to S3...")
     s3_prefix = 'room-detection-training/data'
     s3_client = boto3.client('s3')
 
@@ -178,27 +175,28 @@ task: segment
         ContentType='text/yaml'
     )
 
-    # Upload training data in correct SageMaker structure
-    for split in ['train', 'val']:
-        split_dir = yolo_data_dir / split
+    # Upload all YOLO data files recursively
+    uploaded_count = 0
+    for root, dirs, files in os.walk(str(yolo_data_dir)):
+        for file in files:
+            if file.endswith(('.png', '.txt', '.yaml')):
+                local_path = os.path.join(root, file)
+                relative_path = os.path.relpath(local_path, str(yolo_data_dir))
 
-        if split_dir.exists():
-            # Upload images
-            images_dir = split_dir / "images"
-            if images_dir.exists():
-                for img_file in images_dir.glob("*.png"):
-                    s3_key = f"{s3_prefix}/images/{split}/{img_file.name}"
-                    print(f"Uploading {img_file.name}...")
-                    s3_client.upload_file(str(img_file), bucket, s3_key)
+                # Skip the local data.yaml, use SageMaker version
+                if file == 'data.yaml' and 'yolo_data' in relative_path:
+                    continue
 
-            # Upload labels
-            labels_dir = split_dir / "labels"
-            if labels_dir.exists():
-                for lbl_file in labels_dir.glob("*.txt"):
-                    s3_key = f"{s3_prefix}/labels/{split}/{lbl_file.name}"
-                    s3_client.upload_file(str(lbl_file), bucket, s3_key)
+                s3_key = f"{s3_prefix}/{relative_path}"
+                s3_client.upload_file(local_path, bucket, s3_key)
+                uploaded_count += 1
 
-    # Download YOLO weights if not present
+                if uploaded_count % 50 == 0:
+                    print(f"Uploaded {uploaded_count} files...")
+
+    print(f"✅ Uploaded {uploaded_count} files to S3")
+
+    # Download and upload YOLO weights
     weights_path = yolo_data_dir / "yolov8s-seg.pt"
     if not weights_path.exists():
         print("Downloading YOLO weights...")
@@ -206,18 +204,18 @@ task: segment
             import urllib.request
             weights_url = "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s-seg.pt"
             urllib.request.urlretrieve(weights_url, str(weights_path))
+            print("Weights downloaded")
         except Exception as e:
             print(f"Failed to download weights: {e}")
-            print("Training may fail without weights")
+            return
 
     # Upload weights
-    if weights_path.exists():
-        s3_key = f"{s3_prefix}/yolov8s-seg.pt"
-        s3_client.upload_file(str(weights_path), bucket, s3_key)
-        print("Weights uploaded")
+    s3_key = f"{s3_prefix}/yolov8s-seg.pt"
+    s3_client.upload_file(str(weights_path), bucket, s3_key)
+    print("✅ Weights uploaded")
 
     training_data_path = f's3://{bucket}/{s3_prefix}'
-    print(f"Data uploaded to {training_data_path}")
+    print(f"✅ Data uploaded to {training_data_path}")
 
     print("Launching training job...")
     print("This will take 2-4 hours")

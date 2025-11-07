@@ -15,10 +15,20 @@ def main():
     print(f"Working directory: {os.getcwd()}")
 
     try:
-        # Install ultralytics
+        # Install ultralytics with more robust installation
         print("\n1. Installing ultralytics...")
-        os.system(f"{sys.executable} -m pip install ultralytics>=8.1.0 --quiet")
-        print("Ultralytics installed")
+        import subprocess
+        result = subprocess.run([
+            sys.executable, "-m", "pip", "install",
+            "ultralytics>=8.1.0", "torch", "torchvision", "torchaudio",
+            "--quiet", "--no-cache-dir"
+        ], capture_output=True, text=True, timeout=300)
+
+        if result.returncode != 0:
+            print(f"Installation failed: {result.stderr}")
+            return
+
+        print("Ultralytics installed successfully")
 
         # Import libraries
         print("\n2. Importing libraries...")
