@@ -1,0 +1,17 @@
+# AWS Credentials Template for Room Detection Training
+# Copy this to .env and fill in your actual credentials
+
+# Your AWS Access Key ID (from Gauntlet AI team)
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_HERE
+
+# Your AWS Secret Access Key (from Gauntlet AI team)
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY_HERE
+
+# AWS Region (keep as us-east-1)
+AWS_DEFAULT_REGION=us-east-1
+
+# Instructions:
+# 1. Copy this file to .env: cp env_template.txt .env
+# 2. Replace YOUR_ACCESS_KEY_HERE and YOUR_SECRET_KEY_HERE with actual values
+# 3. Run: python check_aws.py to verify
+# 4. Run: python sagemaker_train.py to start training

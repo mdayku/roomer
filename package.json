@@ -1,0 +1,17 @@
+{
+  "name": "room-detection-ai",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"pnpm --filter @app/server dev\" \"pnpm --filter @app/web dev\"",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.3.1",
+    "glob": "^11.0.3",
+    "marchingsquares": "^1.3.3"
+  }
+}

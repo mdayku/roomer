@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dataset directories (too large for git)
+cubicasa5k/
+cubicasa5k_coco/
+cubicasa5k_geojson/
+cubicasa5k_svg_geojson/
+cubicasa5k_svg_geojson_test/
+room_detection_dataset/
+room_detection_dataset_clean/
+room_detection_dataset_coco/
+test_output/
+
+# ML training artifacts
+room_detection_training/outputs/
+room_detection_training/yolo_data/
+room_detection_training/*.pth
+room_detection_training/*.onnx
+
+# AWS
+.aws/
+
+# Temporary files
+*.tmp
+*.temp
