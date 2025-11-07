@@ -67,8 +67,19 @@ test_output/
 # ML training artifacts
 room_detection_training/outputs/
 room_detection_training/yolo_data/
+room_detection_training/local_training_output/
+room_detection_training/runs/
+room_detection_training/testing/
+room_detection_training/room_detection_test_*/
+room_detection_training/*.pt
 room_detection_training/*.pth
 room_detection_training/*.onnx
+room_detection_training/*.png
+room_detection_training/*.jpg
+room_detection_training/*.avi
+room_detection_training/*.mp4
+room_detection_training/*.csv
+room_detection_training/*.pdf
 
 # AWS
 .aws/
