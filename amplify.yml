@@ -4,11 +4,12 @@ frontend:
     preBuild:
       commands:
         - pwd && ls -la
+        - cd ../.. && pwd && ls -la  # Go back to repo root
         - npm install -g pnpm
         - pnpm install --frozen-lockfile
     build:
       commands:
-        - pwd && ls -la apps/
+        - pwd && ls -la apps/ 2>/dev/null || (echo "Not in repo root, changing..." && cd ../.. && pwd && ls -la apps/)
         - pnpm --filter @app/web run build
   artifacts:
     baseDirectory: apps/web/dist
@@ -30,9 +31,8 @@ backend:
         - cd apps/server && pwd && pnpm install --frozen-lockfile
     build:
       commands:
-        - pwd && ls -la apps/ 2>/dev/null || echo "apps/ not found from current dir"
-        - ls -la ../../apps/ 2>/dev/null || echo "apps/ not found from ../../"
-        - cd apps/server 2>/dev/null && pwd && pnpm run build || (echo "cd failed, trying absolute path" && cd /codebuild/output/src*/src/roomer/apps/server && pwd && pnpm run build)
+        - pwd && ls -la  # Check where we are now
+        - cd apps/server 2>/dev/null && pwd && pnpm run build || (echo "Not in server dir, changing..." && cd /codebuild/output/src*/src/roomer/apps/server && pwd && pnpm run build)
   artifacts:
     baseDirectory: apps/server/dist
     files:
