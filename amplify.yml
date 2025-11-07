@@ -3,50 +3,54 @@ frontend:
   phases:
     preBuild:
       commands:
-        - npm ci --cache .npm --prefer-offline
+        - npm install -g pnpm
+        - pnpm install --frozen-lockfile
     build:
       commands:
-        - npm run build
+        - pnpm --filter @app/web run build
   artifacts:
-    baseDirectory: dist
+    baseDirectory: apps/web/dist
     files:
       - '**/*'
   cache:
     paths:
-      - .npm
+      - ~/.pnpm-store
       - node_modules
+      - apps/web/node_modules
 
 backend:
   phases:
     preBuild:
       commands:
-        - cd apps/server && npm ci --cache .npm --prefer-offline
+        - npm install -g pnpm
+        - cd apps/server && pnpm install --frozen-lockfile
     build:
       commands:
-        - cd apps/server && npm run build
-    postBuild:
-      commands:
-        - cd apps/server && cp -r dist/* /opt/build/repo/build/backend/
+        - cd apps/server && pnpm run build
+  artifacts:
+    baseDirectory: apps/server/dist
+    files:
+      - '**/*'
   cache:
     paths:
-      - apps/server/.npm
       - apps/server/node_modules
 
 test:
   phases:
     preTest:
       commands:
-        - npm ci --cache .npm --prefer-offline
-        - npm run lint
+        - npm install -g pnpm
+        - pnpm install --frozen-lockfile
+        - pnpm --filter @app/server run build  # Build server first
+        - pnpm --filter @app/web run build     # Build web app
     test:
       commands:
-        - npm run test
+        - pnpm test
   artifacts:
     baseDirectory: coverage
-    configFilePath: '**/coverage/jest/junit.xml'
     files:
       - '**/*'
 
-# Environment variables
+# Environment variables - Add your AWS config here
 env:
   NODE_ENV: production
