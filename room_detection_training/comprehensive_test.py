@@ -388,14 +388,14 @@ summary_df = pd.DataFrame(summary_rows)
 summary_csv = output_dir / f"summary_{batch_tag}.csv"
 summary_df.to_csv(summary_csv, index=False, float_format='%.4f')
 
-    print(f"📊 Summary saved: {summary_csv.name}")
+print(f"📊 Summary saved: {summary_csv.name}")
 
 # === CREATE TOP 10 IMAGES PDF ===
 
-    print("📄 Creating top 10 images PDF...")
-    create_top_10_pdf(model, summary_df, output_dir, batch_tag)
+print("📄 Creating top 10 images PDF...")
+create_top_10_pdf(model, summary_df, output_dir, batch_tag)
 
-    print(f"📄 Top 10 images PDF saved")
+print(f"📄 Top 10 images PDF saved")
 
 # === CREATE VISUALIZATIONS ===
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AuthWrapper } from './components/AuthWrapper';
+import AuthWrapper from './components/AuthWrapper';
 import { Upload } from './components/Upload';
 import { Overlay } from './components/Overlay';
 import { ImageViewer } from './components/ImageViewer';

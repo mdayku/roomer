@@ -138,7 +138,7 @@ export const Overlay: React.FC<{ fc: FeatureCollection|null; containerWidth?: nu
           <circle cx={15} cy={48} r={4} fill="rgb(255, 193, 7)" />
           <text x={25} y={52} fontSize={10} fill="#333">Medium (60-80%)</text>
           <circle cx={15} cy={64} r={4} fill="rgb(220, 53, 69)" />
-          <text x={25} y={68} fontSize={10} fill="#333">Low (<60%)</text>
+          <text x={25} y={68} fontSize={10} fill="#333">Low (&lt;60%)</text>
         </g>
       )}
     </svg>
