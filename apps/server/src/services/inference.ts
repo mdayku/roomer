@@ -9,7 +9,7 @@ const __dirname = dirname(__filename);
 class RoomDetectionInference {
   private pythonPath = 'python3'; // or 'python' on Windows
 
-  async detectRooms(imageBuffer: Buffer): Promise<FeatureCollection> {
+  async detectRooms(imageBuffer: Buffer, modelId?: string): Promise<FeatureCollection> {
     try {
       console.log('Running Python inference...');
 
@@ -19,7 +19,8 @@ class RoomDetectionInference {
       // Prepare input for Python script
       const inputData = JSON.stringify({
         action: 'detect',
-        image: imageBase64
+        image: imageBase64,
+        model: modelId || 'default'
       });
 
       // Call Python inference script
