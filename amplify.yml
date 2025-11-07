@@ -30,7 +30,9 @@ backend:
         - cd apps/server && pwd && pnpm install --frozen-lockfile
     build:
       commands:
-        - cd apps/server && pwd && pnpm run build
+        - pwd && ls -la apps/ 2>/dev/null || echo "apps/ not found from current dir"
+        - ls -la ../../apps/ 2>/dev/null || echo "apps/ not found from ../../"
+        - cd apps/server 2>/dev/null && pwd && pnpm run build || (echo "cd failed, trying absolute path" && cd /codebuild/output/src*/src/roomer/apps/server && pwd && pnpm run build)
   artifacts:
     baseDirectory: apps/server/dist
     files:
