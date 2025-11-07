@@ -194,7 +194,7 @@ task: segment
                 if uploaded_count % 50 == 0:
                     print(f"Uploaded {uploaded_count} files...")
 
-    print(f"✅ Uploaded {uploaded_count} files to S3")
+    print(f"[SUCCESS] Uploaded {uploaded_count} files to S3")
 
     # Download and upload YOLO weights
     weights_path = yolo_data_dir / "yolov8s-seg.pt"
@@ -212,10 +212,10 @@ task: segment
     # Upload weights
     s3_key = f"{s3_prefix}/yolov8s-seg.pt"
     s3_client.upload_file(str(weights_path), bucket, s3_key)
-    print("✅ Weights uploaded")
+    print("[SUCCESS] Weights uploaded")
 
     training_data_path = f's3://{bucket}/{s3_prefix}'
-    print(f"✅ Data uploaded to {training_data_path}")
+    print(f"[SUCCESS] Data uploaded to {training_data_path}")
 
     print("Launching training job...")
     print("This will take 2-4 hours")

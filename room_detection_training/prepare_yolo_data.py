@@ -108,11 +108,11 @@ task: segment
 
 def main():
     parser = argparse.ArgumentParser(description='Prepare YOLO dataset from COCO')
-    parser.add_argument('--coco-train', required=True, help='Path to train COCO annotations')
-    parser.add_argument('--coco-val', required=True, help='Path to val COCO annotations')
+    parser.add_argument('--coco-train', default='../cubicasa5k_coco/train_coco_pt.json', help='Path to train COCO annotations')
+    parser.add_argument('--coco-val', default='../cubicasa5k_coco/val_coco_pt.json', help='Path to val COCO annotations')
     parser.add_argument('--images-train', help='Path to train images directory')
     parser.add_argument('--images-val', help='Path to val images directory')
-    parser.add_argument('--output-dir', required=True, help='Output directory for YOLO dataset')
+    parser.add_argument('--output-dir', default='./yolo_data', help='Output directory for YOLO dataset')
 
     args = parser.parse_args()
 
