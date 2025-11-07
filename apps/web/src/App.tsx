@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import AuthWrapper from './components/AuthWrapper';
 import { Upload } from './components/Upload';
 import { Overlay } from './components/Overlay';
 import { ImageViewer } from './components/ImageViewer';
@@ -215,17 +214,16 @@ export default function App(){
   };
 
   return (
-    <AuthWrapper>
-      <div style={{padding:16, maxWidth: '1400px', margin: '0 auto'}}>
-        <div style={{marginBottom: 24}}>
-          <h1 style={{marginBottom: 8, color: '#2c3e50'}}>Room Detection AI</h1>
-          <p style={{color: '#666', marginBottom: 8}}>
-            Upload architectural blueprints and automatically detect room boundaries using AI
-          </p>
-          <div style={{fontSize: '12px', color: '#888'}}>
-            <strong>Keyboard shortcuts:</strong> Ctrl+U (Upload), Ctrl+S (Saved), Ctrl+N (New File)
-          </div>
+    <div style={{padding:16, maxWidth: '1400px', margin: '0 auto'}}>
+      <div style={{marginBottom: 24}}>
+        <h1 style={{marginBottom: 8, color: '#2c3e50'}}>Room Detection AI</h1>
+        <p style={{color: '#666', marginBottom: 8}}>
+          Upload architectural blueprints and automatically detect room boundaries using AI
+        </p>
+        <div style={{fontSize: '12px', color: '#888'}}>
+          <strong>Keyboard shortcuts:</strong> Ctrl+U (Upload), Ctrl+S (Saved), Ctrl+N (New File)
         </div>
+      </div>
 
         {/* Navigation Tabs */}
         <div style={{
@@ -383,7 +381,7 @@ export default function App(){
           />
         )}
       </div>
-    </AuthWrapper>
+    </div>
   );
 }
 

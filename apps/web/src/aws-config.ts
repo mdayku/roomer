@@ -9,15 +9,8 @@ const awsConfig = {
     // Amazon Cognito Region
     region: process.env.REACT_APP_AWS_REGION || 'us-east-1',
     // Optional - customize the authentication flow type
-    authenticationFlowType: 'USER_SRP_AUTH',
-    // Optional - Hosted UI configuration
-    oauth: {
-      domain: process.env.REACT_APP_OAUTH_DOMAIN || 'room-detection.auth.us-east-1.amazoncognito.com',
-      scope: ['phone', 'email', 'profile', 'openid', 'aws.cognito.signin.user.admin'],
-      redirectSignIn: process.env.REACT_APP_REDIRECT_SIGN_IN || 'http://localhost:3000/',
-      redirectSignOut: process.env.REACT_APP_REDIRECT_SIGN_OUT || 'http://localhost:3000/',
-      responseType: 'code'
-    }
+    authenticationFlowType: 'USER_SRP_AUTH'
+    // Removed OAuth config to avoid undefined errors in production
   },
   API: {
     endpoints: [

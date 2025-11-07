@@ -219,9 +219,8 @@ def train_on_sagemaker():
         framework_version=FRAMEWORK_VERSION,
         py_version=PYTHON_VERSION,
         hyperparameters=HYPERPARAMETERS,
-        # Spot training for cost savings (70% discount)
-        use_spot_instances=True,
-        max_wait=172800,  # 48 hours (for long 200 epoch training)
+        # Use on-demand instances for long training (200 epochs) to avoid spot interruptions
+        use_spot_instances=False,  # Changed to False for stability
         max_run=43200,    # 12 hours training time (for 200 epochs on large model)
         # Enable multi-GPU training on single instance with multiple GPUs
         distribution={
@@ -246,19 +245,18 @@ def train_on_sagemaker():
     print(f"[OK] Training job launched: {job_name}")
     print(f"Monitor progress at: https://{sess.boto_region_name}.console.aws.amazon.com/sagemaker/home?region={sess.boto_region_name}#/jobs/{job_name}")
 
-    # Estimate costs and time for LARGE MODEL + 200 EPOCHS
+    # Estimate costs and time for LARGE MODEL + 200 EPOCHS (on-demand)
     hourly_rate = get_instance_price(INSTANCE_TYPE)
-    spot_rate = hourly_rate * 0.3  # ~70% spot discount
     estimated_hours = 8.0  # A10G x2 GPUs with large model: ~8 hours for 200 epochs
-    estimated_cost = spot_rate * estimated_hours
+    estimated_cost = hourly_rate * estimated_hours
 
     print(f"\nCost Estimate ({INSTANCE_TYPE}) - YOLO Large 200 Epochs:")
-    print(f"- Instance: {INSTANCE_TYPE} (${hourly_rate}/hour -> ${spot_rate:.2f}/hour spot)")
+    print(f"- Instance: {INSTANCE_TYPE} (${hourly_rate}/hour on-demand)")
     print("- Multi-GPU training: 2x A10G GPUs for faster convergence")
     print("- Model: YOLOv8 Large (better accuracy than Small model)")
-    print("- Spot discount: ~70% savings")
+    print("- On-demand pricing: No interruptions, guaranteed completion")
     print(f"- Estimated training time: {estimated_hours} hours")
-    print(f"- Estimated cost: ${estimated_cost:.2f} (with spot pricing)")
+    print(f"- Estimated cost: ${estimated_cost:.2f} (on-demand pricing)")
     print(f"- Expected improvement: 15-25% better mAP vs Small model")
 
     return job_name, estimator
