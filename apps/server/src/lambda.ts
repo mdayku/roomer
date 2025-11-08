@@ -25,7 +25,10 @@ app.use(express.json());
 app.use('/api', detect);
 
 // Wrap Express app for Lambda
+// Configure serverless-http to handle binary content properly
+// API Gateway with AWS_PROXY base64-encodes binary data, and serverless-http
+// needs to know which content types to treat as binary
 export const handler = serverless(app, {
-  binary: ['image/*', 'application/octet-stream'],
+  binary: true, // Treat all content types as potentially binary (safer for multipart)
 });
 

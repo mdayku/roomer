@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && npm run build:lambda",
-    "build:lambda": "esbuild src/lambda.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/lambda.js --external:@aws-sdk/* --external:aws-sdk",
+    "build:lambda": "esbuild src/lambda.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/lambda.js --external:@aws-sdk/* --external:aws-sdk",
     "start": "node dist/index.js",
     "test": "vitest",
     "convert:coco": "tsx scripts/convert_coco_to_geojson.ts --ann ../../cubicasa5k_coco/train_coco_pt.json --out ../../cubicasa5k_geojson --auto-room-cat --min-area 20",

@@ -2,8 +2,15 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Support both ES modules and CommonJS
+// When bundled as CommonJS, esbuild will inject __dirname automatically
+// When running as ES module, derive from import.meta.url
+// @ts-ignore - __dirname may not exist in ES module context
+const __dirname = typeof __dirname !== 'undefined' 
+  ? __dirname 
+  : (typeof import.meta !== 'undefined' && import.meta.url 
+      ? dirname(fileURLToPath(import.meta.url))
+      : '.');
 
 // DetectedRoom type matching the required output schema
 export interface DetectedRoom {
@@ -65,7 +72,22 @@ class RoomDetectionInference {
 
   private async callPythonScript(inputData: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const scriptPath = join(__dirname, 'inference.py');
+      // In Lambda, __dirname points to /var/task, so we need to find the script
+      // Try multiple possible locations
+      const possiblePaths = [
+        join(__dirname, 'inference.py'),
+        join(__dirname, 'services', 'inference.py'),
+        '/var/task/services/inference.py',
+        './services/inference.py'
+      ];
+      const scriptPath = possiblePaths.find(p => {
+        try {
+          const fs = require('fs');
+          return fs.existsSync(p);
+        } catch {
+          return false;
+        }
+      }) || possiblePaths[0]; // Fallback to first path
 
       const python = spawn(this.pythonPath, [scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe']
