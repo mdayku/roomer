@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:lambda",
+    "build:lambda": "esbuild src/lambda.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/lambda.js --external:@aws-sdk/* --external:aws-sdk --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);'",
     "start": "node dist/index.js",
     "test": "vitest",
     "convert:coco": "tsx scripts/convert_coco_to_geojson.ts --ann ../../cubicasa5k_coco/train_coco_pt.json --out ../../cubicasa5k_geojson --auto-room-cat --min-area 20",
@@ -29,6 +30,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.11",
     "@types/node": "^20.11.0",
+    "esbuild": "^0.25.12",
     "tsx": "^4.20.6",
     "typescript": "^5.6.3",
     "vitest": "^2.1.3"
