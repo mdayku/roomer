@@ -5,12 +5,18 @@ import { dirname, join } from 'path';
 // Support both ES modules and CommonJS
 // When bundled as CommonJS, esbuild will inject __dirname automatically
 // When running as ES module, derive from import.meta.url
-// @ts-ignore - __dirname may not exist in ES module context
-const __dirname = typeof __dirname !== 'undefined' 
-  ? __dirname 
-  : (typeof import.meta !== 'undefined' && import.meta.url 
-      ? dirname(fileURLToPath(import.meta.url))
-      : '.');
+// Use a different variable name to avoid the "used before declaration" error
+let __dirnameValue: string;
+// @ts-ignore - __dirname may exist as a global in CommonJS
+if (typeof (globalThis as any).__dirname !== 'undefined') {
+  // @ts-ignore
+  __dirnameValue = __dirname;
+} else if (typeof import.meta !== 'undefined' && import.meta.url) {
+  __dirnameValue = dirname(fileURLToPath(import.meta.url));
+} else {
+  __dirnameValue = '.';
+}
+const __dirname = __dirnameValue;
 
 // DetectedRoom type matching the required output schema
 export interface DetectedRoom {
