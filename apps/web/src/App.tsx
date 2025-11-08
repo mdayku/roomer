@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Upload } from './components/Upload';
 import { ModelSelector, type Model } from './components/ModelSelector';
+import { detectRooms } from './lib/api';
 
 // Available models (now includes our trained SageMaker model!)
 const AVAILABLE_MODELS: Model[] = [
