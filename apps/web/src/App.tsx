@@ -25,9 +25,18 @@ const AVAILABLE_MODELS: Model[] = [
 export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>(AVAILABLE_MODELS[0].id);
   const [imgUrl, setImgUrl] = useState<string|null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState<string>('');
+  const [detectionResult, setDetectionResult] = useState<any>(null);
 
   const handleImageSelect = (url: string) => {
     setImgUrl(url);
+    setDetectionResult(null); // Clear previous results
+  };
+
+  const handleDetectionResult = (result: any) => {
+    setDetectionResult(result);
+    console.log('Detection result:', result);
   };
 
   const handleUploadAndDetect = async (file: File) => {
@@ -74,8 +83,30 @@ export default function App() {
               onResult={(result) => console.log('Result:', result)}
               onImageSelect={handleImageSelect}
               onFileUpload={handleUploadAndDetect}
-              disabled={false}
+              disabled={isProcessing}
             />
+            {isProcessing && (
+              <div style={{
+                marginTop: 12,
+                padding: 8,
+                background: '#d1ecf1',
+                border: '1px solid #bee5eb',
+                borderRadius: 4,
+                color: '#0c5460'
+              }}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                  <div style={{fontSize: '16px'}}>🔄</div>
+                  <div>
+                    <div style={{fontWeight: 'bold'}}>
+                      Processing with {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}
+                    </div>
+                    <div style={{fontSize: '14px', marginTop: 2}}>
+                      {processingProgress || 'Preparing...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -107,6 +138,27 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {detectionResult && (
+        <div style={{
+          marginTop: 24,
+          padding: 16,
+          background: '#d4edda',
+          border: '1px solid #c3e6cb',
+          borderRadius: 4,
+          color: '#155724'
+        }}>
+          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+            <span style={{fontSize: '20px'}}>✓</span>
+            <div>
+              <strong>Detection Complete!</strong>
+              <div style={{marginTop: 4}}>
+                Found {detectionResult.features?.length || 0} room{detectionResult.features?.length !== 1 ? 's' : ''} using {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
