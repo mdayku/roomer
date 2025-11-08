@@ -112,8 +112,10 @@ def fix_api_gateway_cors():
                 print(f"[WARN] Could not find Lambda function: {e}")
         
         # Ensure OPTIONS method exists for CORS preflight
+        options_exists = False
         try:
             apigateway.get_method(restApiId=API_ID, resourceId=resource_id, httpMethod='OPTIONS')
+            options_exists = True
             print("[OK] OPTIONS method already exists")
         except ClientError as e:
             if e.response['Error']['Code'] == 'NotFoundException':
@@ -134,37 +136,45 @@ def fix_api_gateway_cors():
                     type='MOCK',
                     requestTemplates={'application/json': '{"statusCode": 200}'}
                 )
+                options_exists = True
+            else:
+                raise
+        
+        # Always update OPTIONS integration response to ensure correct origin (remove any wildcard '*')
+        if options_exists:
+            print("[INFO] Updating OPTIONS integration response CORS headers to use specific origin...")
+            try:
+                # Get existing integration response to preserve other settings
+                try:
+                    existing = apigateway.get_integration_response(
+                        restApiId=API_ID,
+                        resourceId=resource_id,
+                        httpMethod='OPTIONS',
+                        statusCode='200'
+                    )
+                    response_params = existing.get('responseParameters', {})
+                except:
+                    response_params = {}
                 
-                # Create method response with CORS headers
-                apigateway.put_method_response(
-                    restApiId=API_ID,
-                    resourceId=resource_id,
-                    httpMethod='OPTIONS',
-                    statusCode='200',
-                    responseParameters={
-                        'method.response.header.Access-Control-Allow-Origin': True,
-                        'method.response.header.Access-Control-Allow-Headers': True,
-                        'method.response.header.Access-Control-Allow-Methods': True,
-                    },
-                    responseModels={'application/json': 'Empty'}
-                )
+                # CRITICAL: Set specific origin, NOT '*'
+                response_params['method.response.header.Access-Control-Allow-Origin'] = f"'{ALLOWED_ORIGIN}'"
+                response_params['method.response.header.Access-Control-Allow-Headers'] = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                response_params['method.response.header.Access-Control-Allow-Methods'] = "'OPTIONS,POST,GET'"
                 
-                # Create integration response
+                # Update integration response
                 apigateway.put_integration_response(
                     restApiId=API_ID,
                     resourceId=resource_id,
                     httpMethod='OPTIONS',
                     statusCode='200',
-                    responseParameters={
-                        'method.response.header.Access-Control-Allow-Origin': f"'{ALLOWED_ORIGIN}'",
-                        'method.response.header.Access-Control-Allow-Headers': "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
-                        'method.response.header.Access-Control-Allow-Methods': "'OPTIONS,POST,GET'",
-                    },
+                    responseParameters=response_params,
                     responseTemplates={'application/json': ''}
                 )
-                print("[OK] Created OPTIONS method with CORS headers")
-            else:
-                raise
+                print(f"[OK] Updated OPTIONS integration response to use origin: {ALLOWED_ORIGIN}")
+            except Exception as e:
+                print(f"[WARN] Could not update OPTIONS integration response: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Update POST method response to include CORS headers
         try:

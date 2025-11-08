@@ -1,35 +1,35 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { roomDetector } from '../services/inference';
-import { mockDetect } from '../services/detector';
+import { roomDetector, type DetectedRoom } from '../services/inference';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const detect = Router();
 
 // POST /api/detect
 // Body: multipart/form-data with 'image' field
-// Returns: GeoJSON FeatureCollection
+// Returns: JSON array of DetectedRoom: [{id, bounding_box, name_hint}, ...]
 
-// Handle OPTIONS preflight for CORS
-detect.options('/detect', (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://master.d7ra9ayxxa84o.amplifyapp.com');
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
-  res.sendStatus(200);
-});
+// Note: CORS is handled by API Gateway, not here
+// Removing explicit headers to avoid conflicts with API Gateway CORS configuration
 
 detect.post('/detect', upload.fields([{ name: 'image' }, { name: 'model' }]), async (req, res) => {
-  // Set CORS headers explicitly
-  res.header('Access-Control-Allow-Origin', 'https://master.d7ra9ayxxa84o.amplifyapp.com');
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
-  
   try {
     if (!req.files || !('image' in req.files) || req.files.image.length === 0) {
-      // No image provided, return mock data
+      // No image provided, return mock data in required format
       console.log('No image provided, returning mock detection');
-      const fc = mockDetect();
-      return res.json(fc);
+      const mockRooms: DetectedRoom[] = [
+        {
+          id: 'room_001',
+          bounding_box: [50, 50, 180, 240], // [x_min, y_min, x_max, y_max] in 0-1000 range
+          name_hint: 'Entry Hall'
+        },
+        {
+          id: 'room_002',
+          bounding_box: [220, 60, 680, 450],
+          name_hint: 'Main Office'
+        }
+      ];
+      return res.json(mockRooms);
     }
 
     const imageFile = req.files.image[0];
@@ -40,8 +40,8 @@ detect.post('/detect', upload.fields([{ name: 'image' }, { name: 'model' }]), as
     // Use real inference with selected model
     const result = await roomDetector.detectRooms(imageFile.buffer, selectedModel);
 
-    console.log(`Detection complete: ${result.features.length} rooms found`);
-    res.json(result);
+    console.log(`Detection complete: ${result.length} rooms found`);
+    res.json(result); // Returns JSON array: [{id, bounding_box, name_hint}, ...]
 
   } catch (error) {
     console.error('Detection error:', error);

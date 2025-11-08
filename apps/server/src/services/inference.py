@@ -202,11 +202,26 @@ def perform_inference(image_data, model_id='default'):
 
         print(f"Detection complete: {len(features)} rooms found")
 
-        return {
-            'type': 'FeatureCollection',
-            'image': {'normalized': True, 'width': image.size[0], 'height': image.size[1]},
-            'features': features
-        }
+        # Convert to required JSON array format: [{id, bounding_box, name_hint}]
+        # bounding_box is normalized to 0-1000 range: [x_min, y_min, x_max, y_max]
+        detected_rooms = []
+        for i, feature in enumerate(features):
+            bbox_norm = feature['properties']['bbox_norm']  # [x1, y1, x2, y2] in 0-1 range
+            # Convert to 0-1000 range
+            bounding_box = [
+                int(bbox_norm[0] * 1000),  # x_min
+                int(bbox_norm[1] * 1000),  # y_min
+                int(bbox_norm[2] * 1000),  # x_max
+                int(bbox_norm[3] * 1000)   # y_max
+            ]
+            
+            detected_rooms.append({
+                'id': feature['properties']['id'],
+                'bounding_box': bounding_box,
+                'name_hint': feature['properties']['name_hint']
+            })
+
+        return detected_rooms
 
     except Exception as e:
         print(f"Inference failed: {e}")
@@ -240,11 +255,23 @@ def get_mock_results(image_data):
             }
         })
 
-    return {
-        'type': 'FeatureCollection',
-        'image': {'normalized': True},
-        'features': features
-    }
+    # Convert to required JSON array format
+    detected_rooms = []
+    for i, feature in enumerate(features):
+        bbox_norm = feature['properties']['bbox_norm']
+        bounding_box = [
+            int(bbox_norm[0] * 1000),
+            int(bbox_norm[1] * 1000),
+            int(bbox_norm[2] * 1000),
+            int(bbox_norm[3] * 1000)
+        ]
+        detected_rooms.append({
+            'id': feature['properties']['id'],
+            'bounding_box': bounding_box,
+            'name_hint': feature['properties']['name_hint']
+        })
+    
+    return detected_rooms
 
 if __name__ == "__main__":
     main()

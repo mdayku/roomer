@@ -1,15 +1,21 @@
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import type { FeatureCollection, Feature } from '../types/geo';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// DetectedRoom type matching the required output schema
+export interface DetectedRoom {
+  id: string;
+  bounding_box: [number, number, number, number]; // [x_min, y_min, x_max, y_max] in 0-1000 range
+  name_hint: string;
+}
+
 class RoomDetectionInference {
   private pythonPath = 'python3'; // or 'python' on Windows
 
-  async detectRooms(imageBuffer: Buffer, modelId?: string): Promise<FeatureCollection> {
+  async detectRooms(imageBuffer: Buffer, modelId?: string): Promise<DetectedRoom[]> {
     try {
       console.log('Running Python inference...');
 
@@ -30,48 +36,30 @@ class RoomDetectionInference {
         throw new Error(result.error);
       }
 
-      console.log(`Inference complete: ${result.features?.length || 0} rooms detected`);
-      return result;
+      // Python script now returns array of DetectedRoom objects
+      const detectedRooms: DetectedRoom[] = Array.isArray(result) ? result : [];
+      console.log(`Inference complete: ${detectedRooms.length} rooms detected`);
+      return detectedRooms;
 
     } catch (error) {
       console.error('Inference failed:', error);
 
-      // Fallback to mock results
+      // Fallback to mock results in required format
       console.log('Falling back to mock detection');
-      const mockFeatures: Feature[] = [
+      const mockRooms: DetectedRoom[] = [
         {
-          type: 'Feature' as const,
-          properties: {
-            id: 'room_001',
-            name_hint: 'Living Room',
-            confidence: 0.92,
-            bbox_norm: [0.1, 0.1, 0.4, 0.3]
-          },
-          geometry: {
-            type: 'Polygon' as const,
-            coordinates: [[[0.1, 0.1], [0.4, 0.1], [0.4, 0.3], [0.1, 0.3], [0.1, 0.1]]]
-          }
+          id: 'room_001',
+          bounding_box: [50, 50, 400, 300], // [x_min, y_min, x_max, y_max] in 0-1000 range
+          name_hint: 'Entry Hall'
         },
         {
-          type: 'Feature' as const,
-          properties: {
-            id: 'room_002',
-            name_hint: 'Kitchen',
-            confidence: 0.88,
-            bbox_norm: [0.5, 0.1, 0.8, 0.4]
-          },
-          geometry: {
-            type: 'Polygon' as const,
-            coordinates: [[[0.5, 0.1], [0.8, 0.1], [0.8, 0.4], [0.5, 0.4], [0.5, 0.1]]]
-          }
+          id: 'room_002',
+          bounding_box: [250, 50, 700, 500],
+          name_hint: 'Main Office'
         }
       ];
 
-      return {
-        type: 'FeatureCollection',
-        image: { normalized: true },
-        features: mockFeatures
-      };
+      return mockRooms;
     }
   }
 
