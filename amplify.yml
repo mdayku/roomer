@@ -28,7 +28,7 @@ backend:
         - pwd && ls -la
         - npm install -g pnpm
         - ls -la apps/
-        - cd apps/server && pwd && pnpm install --frozen-lockfile
+        - pnpm install --frozen-lockfile
     build:
       commands:
         - pwd && ls -la  # Check where we are now
