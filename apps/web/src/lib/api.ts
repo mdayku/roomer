@@ -6,8 +6,9 @@ export async function detectRooms(file?: File, modelId?: string): Promise<Featur
   if (modelId) form.append('model', modelId);
 
   // Use deployed API endpoint in production, localhost for development
-  const apiUrl = import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_ENDPOINT || 'http://localhost:4000';
-  const res = await fetch(`${apiUrl}/api/detect`, { method:'POST', body: form });
+  const apiUrl = process.env.REACT_APP_API_ENDPOINT || 'https://qhhfso7u0h.execute-api.us-east-1.amazonaws.com/prod';
+  const fullUrl = apiUrl + '/api/detect';
+  const res = await fetch(fullUrl, { method:'POST', body: form });
 
   if (!res.ok) throw new Error('detect failed');
   return res.json();
