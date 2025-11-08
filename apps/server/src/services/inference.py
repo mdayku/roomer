@@ -20,12 +20,19 @@ MODEL_S3_BUCKET = 'sagemaker-us-east-1-971422717446'
 # Available models
 MODELS = {
     'yolo-v8s-sagemaker': {
-        's3_key': 'room-detection-yolo-1762552007/output/model.tar.gz',
-        'local_path': '/tmp/yolo_v8s_sagemaker.pt'
+        's3_key': 'room-detection-yolo-1762552007/output/best.pt',  # 20-epoch Small model
+        'local_path': '/tmp/yolo_v8s_sagemaker.pt',
+        'description': 'YOLO v8 Small - 20 epochs'
+    },
+    'yolo-v8l-200epoch': {
+        's3_key': 'room-detection-yolo-1762559721/output/best.pt',  # 200-epoch Large model
+        'local_path': '/tmp/yolo_v8l_200epoch.pt',
+        'description': 'YOLO v8 Large - 200 epochs (Best Model)'
     },
     'default': {
-        's3_key': 'room-detection-yolo-1762552007/output/model.tar.gz',
-        'local_path': '/tmp/yolo_v8s_sagemaker.pt'
+        's3_key': 'room-detection-yolo-1762559721/output/best.pt',  # Use best model as default
+        'local_path': '/tmp/yolo_v8l_200epoch.pt',
+        'description': 'YOLO v8 Large - 200 epochs (Default)'
     }
 }
 
@@ -66,15 +73,52 @@ def load_model(model_id='default'):
     model_config = MODELS[model_id]
     local_path = model_config['local_path']
     s3_key = model_config['s3_key']
+    description = model_config.get('description', model_id)
 
     try:
-        print(f"Loading {model_id} model...")
+        print(f"Loading {model_id} model ({description})...")
 
         # Download model from S3 if not exists
         if not os.path.exists(local_path):
             print(f"Downloading model from S3: s3://{MODEL_S3_BUCKET}/{s3_key}")
             s3_client = boto3.client('s3')
-            s3_client.download_file(MODEL_S3_BUCKET, s3_key, local_path)
+            
+            # Try downloading the .pt file directly first
+            try:
+                s3_client.download_file(MODEL_S3_BUCKET, s3_key, local_path)
+                print(f"Downloaded model file: {local_path}")
+            except Exception as e:
+                # If .pt file doesn't exist, try downloading model.tar.gz and extracting
+                print(f"Direct .pt download failed: {e}")
+                print("Trying model.tar.gz extraction...")
+                
+                # Try model.tar.gz in the same directory
+                tar_key = s3_key.replace('/best.pt', '/model.tar.gz').replace('/last.pt', '/model.tar.gz')
+                tar_path = local_path + '.tar.gz'
+                
+                try:
+                    s3_client.download_file(MODEL_S3_BUCKET, tar_key, tar_path)
+                    print(f"Downloaded tar.gz, extracting...")
+                    
+                    # Extract model.tar.gz
+                    import tarfile
+                    with tarfile.open(tar_path, 'r:gz') as tar:
+                        # Look for best.pt, last.pt, or any .pt file
+                        pt_files = [m for m in tar.getmembers() if m.name.endswith('.pt')]
+                        if pt_files:
+                            tar.extract(pt_files[0], os.path.dirname(local_path))
+                            extracted_path = os.path.join(os.path.dirname(local_path), pt_files[0].name)
+                            if extracted_path != local_path:
+                                os.rename(extracted_path, local_path)
+                            print(f"Extracted model: {local_path}")
+                        else:
+                            raise Exception("No .pt file found in model.tar.gz")
+                    
+                    # Clean up tar file
+                    os.remove(tar_path)
+                except Exception as tar_error:
+                    print(f"Tar.gz extraction also failed: {tar_error}")
+                    raise Exception(f"Could not download model: {e}")
 
         # Load Ultralytics YOLO model
         from ultralytics import YOLO
@@ -85,6 +129,8 @@ def load_model(model_id='default'):
 
     except Exception as e:
         print(f"Failed to load model {model_id}: {e}")
+        import traceback
+        traceback.print_exc()
         # Try fallback to default model
         if model_id != 'default':
             print("Trying default model...")

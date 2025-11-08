@@ -10,7 +10,20 @@ export const detect = Router();
 // Body: multipart/form-data with 'image' field
 // Returns: GeoJSON FeatureCollection
 
+// Handle OPTIONS preflight for CORS
+detect.options('/detect', (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'https://master.d7ra9ayxxa84o.amplifyapp.com');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
+  res.sendStatus(200);
+});
+
 detect.post('/detect', upload.fields([{ name: 'image' }, { name: 'model' }]), async (req, res) => {
+  // Set CORS headers explicitly
+  res.header('Access-Control-Allow-Origin', 'https://master.d7ra9ayxxa84o.amplifyapp.com');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
+  
   try {
     if (!req.files || !('image' in req.files) || req.files.image.length === 0) {
       // No image provided, return mock data
