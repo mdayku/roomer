@@ -31,8 +31,23 @@ export default function App() {
   };
 
   const handleUploadAndDetect = async (file: File) => {
-    console.log('Upload file:', file.name, 'with model:', selectedModel);
-    // TODO: Implement API call
+    try {
+      console.log('Starting detection for:', file.name, 'with model:', selectedModel);
+      setIsProcessing(true);
+      setProcessingProgress('Uploading blueprint...');
+
+      // Call the API to detect rooms
+      const result = await detectRooms(file, selectedModel);
+      handleDetectionResult(result);
+
+      console.log('Detection completed successfully!');
+    } catch (error) {
+      console.error('Detection failed:', error);
+      alert(`Detection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+      setProcessingProgress('');
+    }
   };
 
   return (
