@@ -3,14 +3,17 @@ import { detect } from './routes/detect';
 
 const app = express();
 
-// Note: CORS is handled by API Gateway when deployed
-// Only enable CORS locally for development
+// CORS: API Gateway handles OPTIONS preflight, but Lambda must send headers for POST
+// Enable CORS middleware for local dev, but in production Lambda sends headers directly
 if (process.env.NODE_ENV !== 'production') {
   const cors = require('cors');
   app.use(cors({
     origin: ['http://localhost:5173', 'http://localhost:3000'],
     credentials: true,
   }));
+} else {
+  // In production (Lambda), we set CORS headers in route handlers
+  // This is because AWS_PROXY passes Lambda response headers through directly
 }
 
 app.use(express.json());

@@ -9,10 +9,19 @@ export const detect = Router();
 // Body: multipart/form-data with 'image' field
 // Returns: JSON array of DetectedRoom: [{id, bounding_box, name_hint}, ...]
 
-// Note: CORS is handled by API Gateway, not here
-// Removing explicit headers to avoid conflicts with API Gateway CORS configuration
+// With AWS_PROXY integration, Lambda response headers pass through directly
+// We need to send CORS headers from Lambda for POST responses
+// OPTIONS preflight is handled by API Gateway MOCK integration
 
 detect.post('/detect', upload.fields([{ name: 'image' }, { name: 'model' }]), async (req, res) => {
+  // Set CORS headers for POST response (required with AWS_PROXY)
+  const origin = req.headers.origin;
+  if (origin === 'https://master.d7ra9ayxxa84o.amplifyapp.com') {
+    res.header('Access-Control-Allow-Origin', origin);  // Specific origin, NOT '*'
+  }
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
+  
   try {
     if (!req.files || !('image' in req.files) || req.files.image.length === 0) {
       // No image provided, return mock data in required format
