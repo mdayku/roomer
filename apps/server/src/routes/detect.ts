@@ -16,11 +16,23 @@ export const detect = Router();
 detect.post('/detect', upload.fields([{ name: 'image' }, { name: 'model' }]), async (req, res) => {
   // Set CORS headers for POST response (required with AWS_PROXY)
   const origin = req.headers.origin;
-  if (origin === 'https://master.d7ra9ayxxa84o.amplifyapp.com') {
-    res.header('Access-Control-Allow-Origin', origin);  // Specific origin, NOT '*'
+  const allowedOrigin = 'https://master.d7ra9ayxxa84o.amplifyapp.com';
+  
+  // Always set CORS headers - use specific origin if it matches, otherwise use the request origin
+  if (origin === allowedOrigin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (origin) {
+    // For debugging: log unexpected origins
+    console.log(`[CORS] Unexpected origin: ${origin}, expected: ${allowedOrigin}`);
+    res.header('Access-Control-Allow-Origin', origin);  // Allow the requesting origin
+  } else {
+    // No origin header (same-origin request or server-to-server)
+    res.header('Access-Control-Allow-Origin', allowedOrigin);
   }
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
+  res.header('Access-Control-Allow-Credentials', 'true');
   
   try {
     if (!req.files || !('image' in req.files) || req.files.image.length === 0) {
