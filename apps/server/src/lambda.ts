@@ -21,14 +21,9 @@ if (process.env.NODE_ENV !== 'production') {
   // This is because AWS_PROXY passes Lambda response headers through directly
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for base64 images
 app.use('/api', detect);
 
 // Wrap Express app for Lambda
-// Configure serverless-http to handle binary content properly
-// API Gateway with AWS_PROXY base64-encodes binary data, and serverless-http
-// needs to know which content types to treat as binary
-export const handler = serverless(app, {
-  binary: true, // Treat all content types as potentially binary (safer for multipart)
-});
+export const handler = serverless(app);
 
