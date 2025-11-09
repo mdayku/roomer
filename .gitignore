@@ -86,9 +86,45 @@ room_detection_training/*.pdf
 room_detection_training/yolo_room_only/
 room_detection_training/yolo_room_seg/
 room_detection_training/yolo_room_wall_2class/
+room_detection_training/yolo_room_only_OLD_BAD_SPLIT/
 
 # AWS
 .aws/
+.sagemaker_inference/
+
+# Lambda deployment artifacts
+room_detection_training/lambda_deployment.zip
+room_detection_training/lambda_package/
+apps/server/lambda.js
+
+# DINO experimental code
+room_detection_training/DINO/
+room_detection_training/dino_sagemaker_source/
+dino_sagemaker_source/
+
+# Debugging/temp scripts (root level)
+check_*.py
+test_*.py
+fix_*.py
+find_*.py
+delete_*.py
+deploy_*.py
+upgrade_*.py
+update_*.py
+monitor_*.py
+list_*.py
+get_*.py
+endpoint_mapping.json
+
+# Debugging/temp scripts (training directory)
+room_detection_training/check_*.py
+room_detection_training/test_*.py
+room_detection_training/fix_*.py
+room_detection_training/find_*.py
+room_detection_training/create_lambda_*.py
+room_detection_training/update_*.py
+room_detection_training/get_*.py
+room_detection_training/debug_*.py
 
 # Temporary files
 *.tmp
