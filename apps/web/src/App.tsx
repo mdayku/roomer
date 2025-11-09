@@ -20,14 +20,6 @@ const AVAILABLE_MODELS: Model[] = [
     status: 'available',
     accuracy: 89.2, // Estimated based on training data
     inferenceTime: 600
-  },
-  {
-    id: 'yolo-v8s-seg',
-    name: 'YOLOv8 Small (Pre-trained)',
-    description: 'Fast and accurate room detection with polygon boundaries',
-    status: 'available',
-    accuracy: 87.1,
-    inferenceTime: 450
   }
 ];
 
@@ -36,7 +28,7 @@ export default function App() {
   const [imgUrl, setImgUrl] = useState<string|null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<string>('');
-  const [detectionResult, setDetectionResult] = useState<any>(null);
+  const [detectionResult, setDetectionResult] = useState<{detections: any[], annotated_image?: string}|null>(null);
 
   const handleImageSelect = (url: string) => {
     setImgUrl(url);
@@ -131,7 +123,9 @@ export default function App() {
             justifyContent: 'center',
             background: '#fafafa'
           }}>
-            {imgUrl ? (
+            {detectionResult?.annotated_image ? (
+              <img src={`data:image/png;base64,${detectionResult.annotated_image}`} alt="Annotated Blueprint" style={{maxWidth: '100%', maxHeight: '100%'}} />
+            ) : imgUrl ? (
               <img src={imgUrl} alt="Blueprint" style={{maxWidth: '100%', maxHeight: '100%'}} />
             ) : (
               <div style={{textAlign: 'center', color: '#6c757d'}}>
@@ -149,22 +143,49 @@ export default function App() {
       </div>
 
       {detectionResult && (
-        <div style={{
-          marginTop: 24,
-          padding: 16,
-          background: '#d4edda',
-          border: '1px solid #c3e6cb',
-          borderRadius: 4,
-          color: '#155724'
-        }}>
-          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-            <span style={{fontSize: '20px'}}>✓</span>
-            <div>
-              <strong>Detection Complete!</strong>
-              <div style={{marginTop: 4}}>
-                Found {detectionResult.features?.length || 0} room{detectionResult.features?.length !== 1 ? 's' : ''} using {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}
+        <div style={{marginTop: 24}}>
+          <div style={{
+            padding: 16,
+            background: '#d4edda',
+            border: '1px solid #c3e6cb',
+            borderRadius: 4,
+            color: '#155724',
+            marginBottom: 16
+          }}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+              <span style={{fontSize: '20px'}}>✓</span>
+              <div>
+                <strong>Detection Complete!</strong>
+                <div style={{marginTop: 4}}>
+                  Found {detectionResult.detections?.length || 0} room{detectionResult.detections?.length !== 1 ? 's' : ''} using {AVAILABLE_MODELS.find(m => m.id === selectedModel)?.name}
+                </div>
               </div>
             </div>
+          </div>
+          
+          {/* JSON Detections Frame */}
+          <div style={{
+            padding: 16,
+            background: '#f8f9fa',
+            border: '1px solid #dee2e6',
+            borderRadius: 4,
+            fontFamily: 'monospace',
+            fontSize: '14px'
+          }}>
+            <div style={{marginBottom: 8, fontWeight: 'bold', color: '#495057'}}>Detections (JSON):</div>
+            <pre style={{
+              margin: 0,
+              padding: 12,
+              background: '#ffffff',
+              border: '1px solid #dee2e6',
+              borderRadius: 4,
+              overflow: 'auto',
+              maxHeight: '300px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word'
+            }}>
+              {JSON.stringify(detectionResult.detections || [], null, 2)}
+            </pre>
           </div>
         </div>
       )}

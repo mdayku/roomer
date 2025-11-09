@@ -11,6 +11,7 @@ from pathlib import Path
 from PIL import Image
 import argparse
 from tqdm import tqdm
+import random
 
 def convert_coco_to_yolo_room_only(coco_path, output_dir, images_base_path, split_name):
     """
@@ -153,10 +154,78 @@ def convert_coco_to_yolo_room_only(coco_path, output_dir, images_base_path, spli
     return processed_images, total_room_labels
 
 
+def process_split_images(split_img_ids, image_metadata, room_annotations, images_base, images_dir, labels_dir):
+    """
+    Process images for a given split
+    """
+    from tqdm import tqdm
+    import shutil
+    
+    processed_count = 0
+    label_count = 0
+    
+    for img_id in tqdm(split_img_ids, desc="  Processing"):
+        if img_id not in image_metadata:
+            continue
+        
+        img_info = image_metadata[img_id]
+        img_width = img_info['width']
+        img_height = img_info['height']
+        img_filename = img_info['file_name']
+        
+        # Extract relative path from absolute Kaggle path
+        # e.g., /kaggle/input/.../high_quality_architectural/6044/F1_original.png
+        # -> high_quality_architectural/6044/F1_original.png
+        if 'cubicasa5k/' in img_filename:
+            # Split on last occurrence of 'cubicasa5k/' and take the part after
+            relative_path = img_filename.split('cubicasa5k/')[-1]
+        else:
+            relative_path = img_filename
+        
+        # Find source image
+        source_image_path = images_base / relative_path
+        if not source_image_path.exists():
+            continue
+        
+        # Create unique filename using image ID to avoid collisions
+        # Many images have same names (F1_original.png) in different directories
+        file_extension = source_image_path.suffix
+        unique_filename = f"{img_id:06d}{file_extension}"  # e.g., 000123.png
+        
+        # Copy image with unique name
+        dest_image_path = images_dir / unique_filename
+        shutil.copy(source_image_path, dest_image_path)
+        processed_count += 1
+        
+        # Create label file with same unique name
+        label_filename = f"{img_id:06d}.txt"
+        label_path = labels_dir / label_filename
+        
+        with open(label_path, 'w') as f:
+            if img_id in room_annotations:
+                for ann in room_annotations[img_id]:
+                    if 'bbox' in ann:
+                        x, y, w, h = ann['bbox']
+                        
+                        # Convert to YOLO format (center x, center y, width, height - normalized)
+                        center_x = (x + w/2) / img_width
+                        center_y = (y + h/2) / img_height
+                        norm_w = w / img_width
+                        norm_h = h / img_height
+                        
+                        # YOLO format: class_id center_x center_y width height
+                        f.write(f"0 {center_x:.6f} {center_y:.6f} {norm_w:.6f} {norm_h:.6f}\n")
+                        label_count += 1
+    
+    print(f"  [OK] Processed {processed_count} images, {label_count} labels")
+    return processed_count, label_count
+
+
 def create_data_yaml(output_dir):
     """Create data.yaml for YOLO training"""
     data_yaml_content = f"""# YOLO Data Configuration for Room Detection (ROOM CLASS ONLY)
 # Generated from CubiCasa5K COCO dataset - filtering category_id=2 (room)
+# PROPER 70/20/10 split with seed=42 (no image duplication!)
 
 path: {output_dir}
 train: train/images
@@ -208,21 +277,73 @@ def main():
     # Create output directory
     output_dir.mkdir(exist_ok=True)
     
+    # Load ALL images from train COCO file (which contains most/all images)
+    # Then re-split 70/20/10 ourselves for proper validation
+    print("\n[INFO] Loading all images and creating 70/20/10 split...")
+    print("[INFO] This ensures no image appears in multiple splits!")
+    
+    # Load train COCO (contains 4200 images)
+    train_coco_file = coco_dir / "train_coco_pt.json"
+    if not train_coco_file.exists():
+        raise FileNotFoundError(f"Train COCO file not found: {train_coco_file}")
+    
+    with open(train_coco_file, 'r') as f:
+        coco_data = json.load(f)
+    
+    # Filter for ROOM annotations only (category_id=2)
+    print(f"[INFO] Filtering for category_id=2 (room)...")
+    room_images = set()
+    room_annotations = {}
+    
+    for ann in coco_data['annotations']:
+        if ann['category_id'] == 2:  # room
+            img_id = ann['image_id']
+            room_images.add(img_id)
+            if img_id not in room_annotations:
+                room_annotations[img_id] = []
+            room_annotations[img_id].append(ann)
+    
+    # Get image metadata
+    image_metadata = {img['id']: img for img in coco_data['images'] if img['id'] in room_images}
+    
+    print(f"[INFO] Found {len(room_images)} images with room annotations")
+    
+    # Create 70/20/10 split with seed=42 for reproducibility
+    import random
+    random.seed(42)
+    all_img_ids = sorted(list(room_images))
+    random.shuffle(all_img_ids)
+    
+    total = len(all_img_ids)
+    train_size = int(0.7 * total)
+    val_size = int(0.2 * total)
+    
+    train_ids = set(all_img_ids[:train_size])
+    val_ids = set(all_img_ids[train_size:train_size + val_size])
+    test_ids = set(all_img_ids[train_size + val_size:])
+    
+    print(f"[INFO] Split: Train={len(train_ids)} ({len(train_ids)/total*100:.1f}%), Val={len(val_ids)} ({len(val_ids)/total*100:.1f}%), Test={len(test_ids)} ({len(test_ids)/total*100:.1f}%)")
+    
     # Process each split
     total_images = 0
     total_labels = 0
     
-    for split in ['train', 'val', 'test']:
-        coco_file = coco_dir / f"{split}_coco_pt.json"
-        if not coco_file.exists():
-            print(f"[WARN] Warning: {coco_file} not found, skipping {split} split")
-            continue
+    for split_name, split_ids in [('train', train_ids), ('val', val_ids), ('test', test_ids)]:
+        # Create split directories
+        split_images_dir = output_dir / split_name / "images"
+        split_labels_dir = output_dir / split_name / "labels"
+        split_images_dir.mkdir(parents=True, exist_ok=True)
+        split_labels_dir.mkdir(parents=True, exist_ok=True)
         
-        processed, labels = convert_coco_to_yolo_room_only(
-            coco_file, 
-            output_dir, 
+        print(f"\n[INFO] Processing {split_name} split ({len(split_ids)} images)...")
+        
+        processed, labels = process_split_images(
+            split_ids,
+            image_metadata,
+            room_annotations,
             images_base,
-            split
+            split_images_dir,
+            split_labels_dir
         )
         total_images += processed
         total_labels += labels

@@ -15,6 +15,8 @@ import sys
 import time
 import argparse
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 # Load environment variables from .env file
 load_dotenv()
@@ -106,40 +108,102 @@ def get_hyperparameters(task='detect', model_size='l', imgsz=800):
     return base_params
 
 
-def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False):
-    """Upload training data to S3"""
+def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False, reuse_images_from_s3=None):
+    """Upload training data to S3, optionally reusing images from another dataset"""
     print(f"Checking if data exists in s3://{s3_bucket}/{s3_prefix}")
 
     s3_client = boto3.client('s3')
     from botocore.exceptions import ClientError
 
-    # Check if data.yaml already exists (indicating data was uploaded)
-    try:
-        s3_client.head_object(Bucket=s3_bucket, Key=f"{s3_prefix}/data.yaml")
-        if force_upload:
-            print("Data exists in S3 but force_upload=True, will re-upload...")
-        else:
-            print("Data already exists in S3, skipping upload")
-            return f"s3://{s3_bucket}/{s3_prefix}"
-    except ClientError as e:
-        if e.response['Error']['Code'] == '404':
-            print("Data not found in S3, uploading...")
-        else:
-            raise
-
-    print(f"Uploading data to s3://{s3_bucket}/{s3_prefix}")
-
+    print(f"Checking and uploading data to s3://{s3_bucket}/{s3_prefix}")
+    print("Using parallel uploads (10 threads) for faster transfer...")
+    
+    # Collect all files to process
+    files_to_process = []
     for root, dirs, files in os.walk(local_data_dir):
         for file in files:
             local_path = os.path.join(root, file)
             relative_path = os.path.relpath(local_path, local_data_dir)
+            # CRITICAL: Normalize path separators to forward slashes for S3/Linux
+            relative_path = relative_path.replace('\\', '/')
             s3_key = f"{s3_prefix}/{relative_path}"
-
-            print(f"Uploading {relative_path}...")
-            s3_client.upload_file(local_path, s3_bucket, s3_key)
+            files_to_process.append((local_path, relative_path, s3_key))
+    
+    total_files = len(files_to_process)
+    print(f"Total local files: {total_files}")
+    
+    # Thread-safe counters
+    uploaded_count = 0
+    skipped_existing = 0
+    copied_from_other = 0
+    lock = Lock()
+    
+    def upload_file_task(task_data):
+        """Upload a single file (or skip if exists, or copy from other dataset)"""
+        local_path, relative_path, s3_key = task_data
+        nonlocal uploaded_count, skipped_existing, copied_from_other
+        
+        # Each thread needs its own S3 client
+        thread_s3_client = boto3.client('s3')
+        
+        try:
+            # Check if file already exists in S3
+            try:
+                thread_s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                # File exists, skip unless force_upload
+                if not force_upload:
+                    with lock:
+                        skipped_existing += 1
+                    return 'skipped'
+            except ClientError as e:
+                if e.response['Error']['Code'] != '404':
+                    raise  # Some other error
+            
+            # Check if we should reuse images from another dataset
+            if reuse_images_from_s3 and '/images/' in relative_path:
+                try:
+                    source_key = f"{reuse_images_from_s3}/{relative_path}"
+                    thread_s3_client.head_object(Bucket=s3_bucket, Key=source_key)
+                    thread_s3_client.copy_object(
+                        CopySource={'Bucket': s3_bucket, 'Key': source_key},
+                        Bucket=s3_bucket,
+                        Key=s3_key
+                    )
+                    with lock:
+                        copied_from_other += 1
+                    return 'copied'
+                except ClientError:
+                    pass  # Source doesn't exist, upload normally
+            
+            # Upload the file
+            thread_s3_client.upload_file(local_path, s3_bucket, s3_key)
+            with lock:
+                uploaded_count += 1
+            return 'uploaded'
+        
+        except Exception as e:
+            print(f"  [ERROR] Failed to process {relative_path}: {e}")
+            return 'error'
+    
+    # Process files in parallel
+    print("Starting parallel upload...")
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(upload_file_task, task): task for task in files_to_process}
+        
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 200 == 0 or completed == total_files:
+                print(f"  Progress: {completed}/{total_files} files processed ({completed/total_files*100:.1f}%)")
+            future.result()  # Will raise exception if task failed
 
     s3_data_path = f"s3://{s3_bucket}/{s3_prefix}"
-    print(f"[OK] Data uploaded to {s3_data_path}")
+    print(f"\n[OK] Data sync complete: {s3_data_path}")
+    print(f"  - Uploaded: {uploaded_count} new files")
+    print(f"  - Skipped: {skipped_existing} existing files")
+    if copied_from_other > 0:
+        print(f"  - Copied: {copied_from_other} images from other dataset (optimization)")
+    print(f"  - Total: {total_files} files in dataset")
     return s3_data_path
 
 
@@ -306,16 +370,56 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     shutil.copy('data.yaml', str(local_data_dir / 'data.yaml'))
     print("[OK] Updated data.yaml in dataset directory")
 
-    # Upload data to S3
-    s3_prefix = f'room-detection-training/data-{task}'
+    # Determine S3 prefix based on task and dataset
+    if args.s3_prefix:
+        s3_prefix = args.s3_prefix
+        print(f"[INFO] Using custom S3 prefix: {s3_prefix}")
+    else:
+        # Auto-detect based on task and dataset directory
+        if task == 'detect':
+            if 'wall' in str(local_data_dir).lower() or '2class' in str(local_data_dir).lower():
+                s3_prefix = 'room-detection-training/data-detect-2class'
+                print("[INFO] Detected 2-class dataset (wall + room)")
+            else:
+                s3_prefix = 'room-detection-training/data-detect-1class'
+                print("[INFO] Detected 1-class dataset (room only)")
+        elif task == 'segment':
+            s3_prefix = 'room-detection-training/data-segment'
+            print("[INFO] Using segmentation dataset")
+        else:
+            s3_prefix = f'room-detection-training/data-{task}'
+    
+    print(f"S3 location: s3://{bucket}/{s3_prefix}")
+    
+    # Check if images are already in S3 from 1-class detect dataset (for reuse optimization)
+    reuse_images_s3 = False
+    detect_1class_prefix = 'room-detection-training/data-detect-1class'
+    if task in ['segment'] or '2class' in s3_prefix:
+        try:
+            s3_client = boto3.client('s3')
+            from botocore.exceptions import ClientError
+            # Check if 1-class detect images exist
+            s3_client.head_object(Bucket=bucket, Key=f"{detect_1class_prefix}/train/images/000001.png")
+            reuse_images_s3 = True
+            print(f"[OPTIMIZATION] Images already in S3 from 1-class detect dataset")
+            print(f"Will only upload labels for {task} task (much faster!)")
+        except:
+            pass
+    
     s3_data_path = upload_data_to_s3(
         bucket,
         s3_prefix,
-        str(local_data_dir)
+        str(local_data_dir),
+        reuse_images_from_s3=detect_1class_prefix if reuse_images_s3 else None
     )
 
     # Get hyperparameters for task
     hyperparameters = get_hyperparameters(task=task, model_size=model_size, imgsz=imgsz)
+    
+    # Override epochs if specified
+    if args.epochs is not None:
+        hyperparameters['epochs'] = args.epochs
+        print(f"[INFO] Overriding epochs: {args.epochs} (default was 200)")
     
     # Create PyTorch estimator
     print("\nCreating SageMaker estimator...")
@@ -347,7 +451,29 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     # Launch training
     print("\nStarting training job...")
 
-    job_name = f'room-{task}-yolo-{int(time.time())}'
+    # Create descriptive job name with metadata
+    # Format: room-{task}-{dataset_type}-yolo{model_size}-{imgsz}px-{epochs}ep-{timestamp}
+    # Examples:
+    #   room-detect-1class-yolol-800px-20ep-1234567890
+    #   room-segment-1class-yolol-1024px-200ep-1234567890
+    #   room-detect-2class-yolol-800px-200ep-1234567890
+    
+    # Determine dataset type from S3 prefix
+    if '1class' in s3_prefix or 'room_only' in str(local_data_dir).lower():
+        dataset_type = '1class'
+    elif '2class' in s3_prefix or 'wall' in str(local_data_dir).lower():
+        dataset_type = '2class'
+    else:
+        dataset_type = '1class'  # default
+    
+    job_name = f'room-{task}-{dataset_type}-yolo{model_size}-{imgsz}px-{hyperparameters["epochs"]}ep-{int(time.time())}'
+    
+    print(f"Job name: {job_name}")
+    print(f"  Task: {task}")
+    print(f"  Dataset: {dataset_type}")
+    print(f"  Model: yolo{model_size}")
+    print(f"  Resolution: {imgsz}px")
+    print(f"  Epochs: {hyperparameters['epochs']}")
 
     estimator.fit(
         inputs={'training': s3_data_path},
@@ -358,12 +484,18 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     print(f"[OK] Training job launched: {job_name}")
     print(f"Monitor progress at: https://{sess.boto_region_name}.console.aws.amazon.com/sagemaker/home?region={sess.boto_region_name}#/jobs/{job_name}")
 
-    # Estimate costs and time
+    # Estimate costs and time based on epochs
     hourly_rate = get_instance_price(INSTANCE_TYPE)
+    epochs = hyperparameters['epochs']
+    
+    # Base estimates for 200 epochs
     if task == 'detect':
-        estimated_hours = 8.0  # Detection: ~8 hours
+        base_hours = 8.0  # Detection: ~8 hours for 200 epochs
     else:
-        estimated_hours = 10.0  # Segmentation: ~10 hours (more complex)
+        base_hours = 10.0  # Segmentation: ~10 hours for 200 epochs
+    
+    # Scale based on actual epochs (assuming linear scaling, conservative estimate)
+    estimated_hours = (epochs / 200) * base_hours
     estimated_cost = hourly_rate * estimated_hours
 
     print(f"\nCost Estimate ({INSTANCE_TYPE}) - {task.upper()}:")
@@ -371,8 +503,12 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     print("- Multi-GPU training: 2x A10G GPUs")
     print(f"- Model: {hyperparameters['weights']}")
     print(f"- Task: {task}")
-    print(f"- Estimated training time: {estimated_hours} hours")
+    print(f"- Epochs: {epochs} {'(QUICK DEMO)' if epochs < 50 else '(FULL TRAINING)' if epochs >= 150 else ''}")
+    print(f"- Estimated training time: {estimated_hours:.1f} hours")
     print(f"- Estimated cost: ${estimated_cost:.2f}")
+    if epochs < 50:
+        full_cost = hourly_rate * base_hours
+        print(f"- Note: This is a quick demo run. Full training (200 epochs) would cost ~${full_cost:.2f}")
 
     return job_name, estimator
 
@@ -566,6 +702,10 @@ CubiCasa5K Stats: Mean 972x866px, Median 775x698px
                        help='Training image size in pixels (default: 800, based on dataset analysis)')
     parser.add_argument('--data-dir', type=str, default=None,
                        help='Override auto-detected data directory')
+    parser.add_argument('--s3-prefix', type=str, default=None,
+                       help='Override S3 prefix (default: auto-detect based on task and dataset)')
+    parser.add_argument('--epochs', type=int, default=None,
+                       help='Override training epochs (default: 200 for full training, use 20 for quick demo)')
     args = parser.parse_args()
     
     print("AWS SageMaker YOLO Training Setup")

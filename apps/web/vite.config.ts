@@ -8,7 +8,11 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
-        changeOrigin: true
+        changeOrigin: true,
+        // Increase body size limit for large base64 images
+        timeout: 60000,
+        // Vite uses http-proxy-middleware which handles large bodies by default
+        // but we can be explicit about it
       }
     }
   }

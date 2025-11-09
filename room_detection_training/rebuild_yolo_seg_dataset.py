@@ -30,7 +30,7 @@ def convert_coco_to_yolo_seg(coco_path, output_dir, images_base_path, split_name
     print(f"  Total images: {len(coco['images'])}")
     print(f"  Total annotations: {len(coco['annotations'])}")
     
-    # Find ROOM category ID
+    # Find ROOM category ID (should be 1 in room_detection_dataset_coco)
     room_cat_id = None
     for cat in coco['categories']:
         if cat['name'].lower() == 'room':
@@ -44,20 +44,26 @@ def convert_coco_to_yolo_seg(coco_path, output_dir, images_base_path, split_name
     # Build image index
     image_index = {img['id']: img for img in coco['images']}
     
-    # Group annotations by image, filtering for ROOM only
+    # Group annotations by image, filtering for ROOM only with segmentation
     print(f"  Filtering for ROOM annotations with segmentation polygons...")
     annotations_by_image = {}
     room_annotation_count = 0
+    skipped_no_seg = 0
     
     for ann in coco['annotations']:
-        if ann['category_id'] == room_cat_id and 'segmentation' in ann:
-            img_id = ann['image_id']
-            if img_id not in annotations_by_image:
-                annotations_by_image[img_id] = []
-            annotations_by_image[img_id].append(ann)
-            room_annotation_count += 1
+        if ann['category_id'] == room_cat_id:
+            if 'segmentation' in ann and ann['segmentation']:
+                img_id = ann['image_id']
+                if img_id not in annotations_by_image:
+                    annotations_by_image[img_id] = []
+                annotations_by_image[img_id].append(ann)
+                room_annotation_count += 1
+            else:
+                skipped_no_seg += 1
     
     print(f"  [OK] Found {room_annotation_count} ROOM segmentation annotations across {len(annotations_by_image)} images")
+    if skipped_no_seg > 0:
+        print(f"  [WARN] Skipped {skipped_no_seg} room annotations without segmentation data")
     
     return annotations_by_image, image_index, room_cat_id
 
@@ -94,7 +100,7 @@ def split_data_70_20_10(annotations_by_image):
     }
 
 
-def process_split(split_name, image_ids, annotations_by_image, image_index, output_dir, images_base_path):
+def process_split(split_name, image_ids, annotations_by_image, image_index, output_dir, images_base_path, reuse_images_from=None):
     """
     Process one split (train/val/test) and create YOLO-seg format files
     """
@@ -108,6 +114,14 @@ def process_split(split_name, image_ids, annotations_by_image, image_index, outp
     processed_images = 0
     skipped_images = 0
     total_room_labels = 0
+    
+    # Check if we should reuse images from another dataset
+    reuse_images = False
+    if reuse_images_from and Path(reuse_images_from).exists():
+        reuse_source = Path(reuse_images_from) / split_name / "images"
+        if reuse_source.exists():
+            reuse_images = True
+            print(f"  [FAST MODE] Reusing images from: {reuse_source}")
     
     # Build local path mapping
     kaggle_prefix = "/kaggle/input/cubicasa5k/cubicasa5k/cubicasa5k/"
@@ -181,10 +195,24 @@ def process_split(split_name, image_ids, annotations_by_image, image_index, outp
                         f.write(f"0 {coords_str}\n")
                         total_room_labels += 1
         
-        # Copy image
+        # Copy or symlink image
         try:
-            shutil.copy2(str(local_img_path), str(new_image_path))
-            processed_images += 1
+            if reuse_images:
+                # Fast mode: create symlink to existing image
+                source_image = reuse_source / image_filename
+                if source_image.exists():
+                    if not new_image_path.exists():
+                        # On Windows, copy is more reliable than symlinks
+                        shutil.copy2(str(source_image), str(new_image_path))
+                    processed_images += 1
+                else:
+                    # Fallback to original source
+                    shutil.copy2(str(local_img_path), str(new_image_path))
+                    processed_images += 1
+            else:
+                # Normal mode: copy from source
+                shutil.copy2(str(local_img_path), str(new_image_path))
+                processed_images += 1
         except Exception as e:
             print(f"    Warning: Failed to copy {local_img_path}: {e}")
             skipped_images += 1
@@ -227,21 +255,23 @@ task: segment
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Rebuild YOLO-SEG dataset from CubiCasa5K COCO - ROOM POLYGONS')
-    parser.add_argument('--coco-train', default='../cubicasa5k_coco/train_coco_pt.json',
-                       help='Path to train COCO annotations')
+    parser = argparse.ArgumentParser(description='Rebuild YOLO-SEG dataset - ROOM POLYGONS')
+    parser.add_argument('--coco-train', default='../room_detection_dataset_coco/train/annotations.json',
+                       help='Path to train COCO annotations (use room_detection_dataset_coco with polygons!)')
     parser.add_argument('--images-base', default='../cubicasa5k/cubicasa5k',
                        help='Base path to cubicasa5k images')
     parser.add_argument('--output-dir', default='./yolo_room_seg',
                        help='Output directory for YOLO segmentation dataset')
     parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed for reproducible splits')
+                       help='Random seed for reproducible splits (use 42 to match other datasets)')
+    parser.add_argument('--reuse-images-from', default='./yolo_room_only',
+                       help='Reuse images from existing dataset (much faster - only generates labels)')
     
     args = parser.parse_args()
     
     print("\n" + "="*60)
     print("REBUILDING YOLO SEGMENTATION DATASET - ROOM POLYGONS")
-    print("Category: room (category_id=2)")
+    print("Source: room_detection_dataset_coco (GeoJSON-derived with polygons)")
     print("Format: YOLO-seg with full polygon masks")
     print("Split: 70% train / 20% val / 10% test")
     print("="*60)
@@ -273,6 +303,12 @@ def main():
     # Create 70/20/10 split
     splits = split_data_70_20_10(annotations_by_image)
     
+    # Check if reusing images
+    reuse_images_from = args.reuse_images_from if hasattr(args, 'reuse_images_from') else None
+    if reuse_images_from and Path(reuse_images_from).exists():
+        print(f"\n[FAST MODE] Reusing images from: {reuse_images_from}")
+        print("Only generating new label files (much faster!)")
+    
     # Process each split
     total_images = 0
     total_labels = 0
@@ -284,7 +320,8 @@ def main():
             annotations_by_image,
             image_index,
             output_dir,
-            images_base
+            images_base,
+            reuse_images_from
         )
         total_images += processed
         total_labels += labels

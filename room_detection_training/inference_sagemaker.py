@@ -16,21 +16,30 @@ def model_fn(model_dir):
     Load the model for inference
     """
     print("Loading model from:", model_dir)
+    print("Contents of model_dir:", os.listdir(model_dir) if os.path.exists(model_dir) else "Directory does not exist")
 
     try:
-        # Install ultralytics if not already installed
-        import subprocess
-        result = subprocess.run([
-            sys.executable, "-m", "pip", "install",
-            "ultralytics>=8.1.0", "--quiet", "--no-cache-dir"
-        ], capture_output=True, text=True, timeout=300)
+        # Try importing ultralytics first (might already be installed)
+        try:
+            from ultralytics import YOLO
+            import torch
+            print("ultralytics already installed")
+        except ImportError:
+            # Install ultralytics if not already installed
+            print("Installing ultralytics...")
+            import subprocess
+            result = subprocess.run([
+                sys.executable, "-m", "pip", "install",
+                "ultralytics>=8.1.0", "--quiet", "--no-cache-dir"
+            ], capture_output=True, text=True, timeout=300)
 
-        if result.returncode != 0:
-            print(f"Installation failed: {result.stderr}")
-            raise Exception("Failed to install ultralytics")
-
-        from ultralytics import YOLO
-        import torch
+            if result.returncode != 0:
+                print(f"Installation failed: {result.stderr}")
+                raise Exception("Failed to install ultralytics")
+            
+            from ultralytics import YOLO
+            import torch
+            print("ultralytics installed successfully")
 
         # Check GPU
         device = 'cuda' if torch.cuda.is_available() else 'cpu'

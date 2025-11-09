@@ -48,14 +48,16 @@ print(f"🤖 Found {len(model_paths)} model(s) to evaluate:")
 for i, path in enumerate(model_paths, 1):
     print(f"  {i}. {path.parent.parent.name}")
 
-# Focus on the best performing model
-viable_models = [p for p in model_paths if "room_detection_v2" in str(p)]
+# Focus on the 200-epoch YOLO Large model
+viable_models = [p for p in model_paths if "yolo-v8l-200epoch" in str(p)]
 if viable_models:
-    print(f"\n🎯 Focusing on viable model: {viable_models[0].parent.parent.name}")
+    print(f"\n🎯 Focusing on 200-epoch YOLO Large model: {viable_models[0].parent.parent.name}")
     model_paths = viable_models
 else:
-    print(f"\n⚠️  No viable models found, testing all models")
-    # Uncomment to test all: model_paths = model_paths
+    print(f"\n⚠️  yolo-v8l-200epoch model not found!")
+    print(f"   Available models: {[p.parent.parent.name for p in model_paths]}")
+    print(f"   Please ensure the model is at: local_training_output/yolo-v8l-200epoch/weights/best.pt")
+    exit(1)
 
 # === DRAW CONFIG ===
 COLORS = {"TP": (0,255,0), "FP": (0,0,255), "FN": (255,0,0)}  # TP=Green, FP=Red, FN=Blue
@@ -388,16 +390,21 @@ summary_df = pd.DataFrame(summary_rows)
 summary_csv = output_dir / f"summary_{batch_tag}.csv"
 summary_df.to_csv(summary_csv, index=False, float_format='%.4f')
 
-    print(f"📊 Summary saved: {summary_csv.name}")
+print(f"📊 Summary saved: {summary_csv.name}")
 
-    # === CREATE TOP 10 IMAGES PDF ===
+# === CREATE TOP 10 IMAGES PDF ===
 
-    print("📄 Creating top 10 images PDF...")
-    pdf_path = create_top_10_pdf(model, summary_df, output_dir, batch_tag)
+print("📄 Creating top 10 images PDF...")
+# Get the first model for PDF generation
+if model_paths and len(summary_df) > 0:
+    try:
+        model = YOLO(model_paths[0])
+        pdf_path = create_top_10_pdf(model, summary_df, output_dir, batch_tag)
+        print(f"📄 Top 10 images PDF saved: {pdf_path.name}")
+    except NameError:
+        print("⚠️  PDF generation function not available, skipping...")
 
-    print(f"📄 Top 10 images PDF saved: {pdf_path.name}")
-
-    # === CREATE VISUALIZATIONS ===
+# === CREATE VISUALIZATIONS ===
 
 # Performance comparison plot
 plt.figure(figsize=(12, 8))
@@ -458,6 +465,18 @@ if best_csv.exists():
     plt.close()
 
     print(f"📊 Recall distribution plot saved: {recall_plot.name}")
+
+# === CREATE TOP 10 IMAGES PDF ===
+
+print("📄 Creating top 10 images PDF...")
+# Get the first model for PDF generation
+if model_paths and len(summary_df) > 0:
+    try:
+        model = YOLO(model_paths[0])
+        pdf_path = create_top_10_pdf(model, summary_df, output_dir, batch_tag)
+        print(f"📄 Top 10 images PDF saved: {pdf_path.name}")
+    except NameError:
+        print("⚠️  PDF generation function not available, skipping...")
 
 # === FUNCTIONS ===
 

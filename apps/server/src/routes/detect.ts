@@ -1,40 +1,43 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { roomDetector, type DetectedRoom } from '../services/inference';
 
 export const detect = Router();
 
+// Multer for file uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
 // POST /api/detect
-// Body: JSON with { image: base64String, model?: string }
+// Body: multipart/form-data with image file and optional model string
 // Returns: JSON array of DetectedRoom: [{id, bounding_box, name_hint}, ...]
 
-detect.post('/detect', async (req, res) => {
+detect.post('/detect', upload.single('image'), async (req, res) => {
   console.log('[DETECT] Request received');
-  console.log('[DETECT] Body type:', typeof req.body);
-  console.log('[DETECT] Has image:', !!req.body?.image);
+  console.log('[DETECT] Has file:', !!req.file);
+  console.log('[DETECT] File size:', req.file?.size);
+  console.log('[DETECT] Model:', req.body?.model);
   
-  // Set CORS headers for POST response (required with AWS_PROXY)
+  // Set CORS headers
   const origin = req.headers.origin;
-  const allowedOrigin = 'https://master.d7ra9ayxxa84o.amplifyapp.com';
-  
-  if (origin === allowedOrigin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else if (origin) {
-    console.log(`[CORS] Unexpected origin: ${origin}, expected: ${allowedOrigin}`);
+  if (origin) {
     res.header('Access-Control-Allow-Origin', origin);
   } else {
-    res.header('Access-Control-Allow-Origin', allowedOrigin);
+    res.header('Access-Control-Allow-Origin', '*');
   }
   
   res.header('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   try {
-    const { image: imageBase64, model: modelId } = req.body || {};
+    const file = req.file;
+    const modelId = req.body?.model;
     
-    if (!imageBase64) {
-      // No image provided, return mock data
-      console.log('No image provided, returning mock detection');
+    if (!file) {
+      console.log('[DETECT] No image provided, returning mock data');
       const mockRooms: DetectedRoom[] = [
         {
           id: 'room_001',
@@ -47,28 +50,29 @@ detect.post('/detect', async (req, res) => {
           name_hint: 'Main Office'
         }
       ];
-      return res.json(mockRooms);
+      return res.json({ detections: mockRooms, annotated_image: null });
     }
 
-    // Convert base64 to buffer
-    const imageBuffer = Buffer.from(imageBase64, 'base64');
-    console.log(`Processing image: ${imageBuffer.length} bytes with model: ${modelId || 'default'}`);
+    console.log(`[DETECT] Processing ${file.size} byte image (${file.mimetype}) with model: ${modelId || 'default'}`);
 
     // Use real inference with selected model
-    const result = await roomDetector.detectRooms(imageBuffer, modelId);
-
-    console.log(`Detection complete: ${result.length} rooms found`);
-    res.json(result);
+    console.log('[DETECT] Calling roomDetector.detectRooms...');
+    const result = await roomDetector.detectRooms(file.buffer, modelId);
+    console.log(`[DETECT] Found ${result.detections?.length || 0} rooms`);
+    
+    // Return both detections and annotated image
+    res.json({
+      detections: result.detections || [],
+      annotated_image: result.annotated_image || null
+    });
 
   } catch (error) {
-    console.error('Detection error:', error);
+    console.error('[DETECT] Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const errorStack = error instanceof Error ? error.stack : undefined;
-    console.error('Error stack:', errorStack);
+    console.error('[DETECT] Error stack:', error instanceof Error ? error.stack : 'No stack');
     res.status(500).json({
       error: 'Detection failed',
-      message: errorMessage,
-      stack: process.env.NODE_ENV === 'production' ? undefined : errorStack
+      message: errorMessage
     });
   }
 });

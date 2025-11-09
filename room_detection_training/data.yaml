@@ -2,10 +2,11 @@
 path: /opt/ml/input/data/training  # SageMaker data channel
 train: train/images
 val: val/images
+test: test/images
 
 # Classes
 nc: 1
 names: ['room']
 
-# Detection task (using bounding boxes)
+# Task type
 task: detect

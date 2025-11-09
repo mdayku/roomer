@@ -1,0 +1,17 @@
+# Ignore large/unnecessary files when uploading to SageMaker
+DINO/.git/
+DINO/figs/
+DINO/*.md
+DINO/*.ipynb
+DINO/runs/
+DINO/outputs/
+*.pyc
+__pycache__/
+*.pt
+*.pth
+*.pkl
+*.zip
+lambda_package/
+lambda_deployment.zip
+
+

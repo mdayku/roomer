@@ -103,7 +103,7 @@ def split_data_70_20_10(annotations_by_image):
 
 
 def process_split(split_name, image_ids, annotations_by_image, image_index, 
-                   output_dir, images_base_path, wall_cat_id, room_cat_id):
+                   output_dir, images_base_path, wall_cat_id, room_cat_id, reuse_images_from=None):
     """Process one split with 2-class labels"""
     split_dir = Path(output_dir) / split_name
     images_dir = split_dir / "images"
@@ -115,6 +115,14 @@ def process_split(split_name, image_ids, annotations_by_image, image_index,
     skipped_images = 0
     wall_labels = 0
     room_labels = 0
+    
+    # Check if we should reuse images from another dataset
+    reuse_images = False
+    if reuse_images_from and Path(reuse_images_from).exists():
+        reuse_source = Path(reuse_images_from) / split_name / "images"
+        if reuse_source.exists():
+            reuse_images = True
+            print(f"  [FAST MODE] Reusing images from: {reuse_source}")
     
     kaggle_prefix = "/kaggle/input/cubicasa5k/cubicasa5k/cubicasa5k/"
     images_base = Path(images_base_path)
@@ -180,10 +188,23 @@ def process_split(split_name, image_ids, annotations_by_image, image_index,
                 
                 f.write(f"{yolo_class} {center_x:.6f} {center_y:.6f} {norm_w:.6f} {norm_h:.6f}\n")
         
-        # Copy image
+        # Copy or reuse image
         try:
-            shutil.copy2(str(local_img_path), str(new_image_path))
-            processed_images += 1
+            if reuse_images:
+                # Fast mode: reuse from existing dataset
+                source_image = reuse_source / image_filename
+                if source_image.exists():
+                    if not new_image_path.exists():
+                        shutil.copy2(str(source_image), str(new_image_path))
+                    processed_images += 1
+                else:
+                    # Fallback to original source
+                    shutil.copy2(str(local_img_path), str(new_image_path))
+                    processed_images += 1
+            else:
+                # Normal mode: copy from source
+                shutil.copy2(str(local_img_path), str(new_image_path))
+                processed_images += 1
         except Exception as e:
             print(f"    Warning: Failed to copy {local_img_path}: {e}")
             skipped_images += 1
@@ -236,6 +257,8 @@ def main():
     parser.add_argument('--images-base', default='../cubicasa5k/cubicasa5k')
     parser.add_argument('--output-dir', default='./yolo_room_wall_2class')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--reuse-images-from', default='./yolo_room_only',
+                       help='Reuse images from existing dataset (much faster - only generates labels)')
     
     args = parser.parse_args()
     
@@ -268,6 +291,12 @@ def main():
     # Split data
     splits = split_data_70_20_10(annotations_by_image)
     
+    # Check if reusing images
+    reuse_images_from = args.reuse_images_from if hasattr(args, 'reuse_images_from') else None
+    if reuse_images_from and Path(reuse_images_from).exists():
+        print(f"\n[FAST MODE] Reusing images from: {reuse_images_from}")
+        print("Only generating new label files (much faster!)")
+    
     # Process splits
     total_images = 0
     total_walls = 0
@@ -276,7 +305,7 @@ def main():
     for split_name, image_ids in splits.items():
         processed, walls, rooms = process_split(
             split_name, image_ids, annotations_by_image, image_index,
-            output_dir, images_base, wall_cat_id, room_cat_id
+            output_dir, images_base, wall_cat_id, room_cat_id, reuse_images_from
         )
         total_images += processed
         total_walls += walls

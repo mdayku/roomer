@@ -51,9 +51,11 @@ def main():
     parser.add_argument('--box', type=float, default=7.5)
     parser.add_argument('--cls', type=float, default=0.5)
     parser.add_argument('--dfl', type=float, default=1.5)
+    parser.add_argument('--seg', type=float, default=2.0)  # Segmentation loss (ignored for detect)
+    parser.add_argument('--task', type=str, default='detect', choices=['detect', 'segment'])
     args = parser.parse_args()
 
-    print(f"Training config: {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}")
+    print(f"Training config: task={args.task}, {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}")
 
     # Import after installation
     from ultralytics import YOLO, settings
@@ -71,7 +73,7 @@ def main():
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
     # Load model
-    print("\nLoading YOLO detection model...")
+    print(f"\nLoading YOLO {args.task} model: {args.weights}...")
     model = YOLO(args.weights)
 
     # Update data path for SageMaker
@@ -92,29 +94,34 @@ def main():
 
     # Training
     print("\nStarting training...")
-    results = model.train(
-        data=args.data,
-        epochs=args.epochs,
-        batch=args.batch_size,
-        imgsz=args.imgsz,
-        device=device,
-        workers=args.workers,
-        project='/opt/ml/model',
-        name='room_detection',
-        save=True,
-        save_period=args.save_period,
-        patience=args.patience,
-        optimizer=args.optimizer,
-        lr0=args.lr0,
-        lrf=args.lrf,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-        warmup_epochs=args.warmup_epochs,
-        box=args.box,
-        cls=args.cls,
-        dfl=args.dfl,
-        # Removed seg parameter for detection model
-    )
+    train_params = {
+        'data': args.data,
+        'epochs': args.epochs,
+        'batch': args.batch_size,
+        'imgsz': args.imgsz,
+        'device': device,
+        'workers': args.workers,
+        'project': '/opt/ml/model',
+        'name': f'room_{args.task}',
+        'save': True,
+        'save_period': args.save_period,
+        'patience': args.patience,
+        'optimizer': args.optimizer,
+        'lr0': args.lr0,
+        'lrf': args.lrf,
+        'momentum': args.momentum,
+        'weight_decay': args.weight_decay,
+        'warmup_epochs': args.warmup_epochs,
+        'box': args.box,
+        'cls': args.cls,
+        'dfl': args.dfl,
+    }
+    
+    # Add segmentation loss if training segmentation model
+    if args.task == 'segment':
+        train_params['seg'] = args.seg
+    
+    results = model.train(**train_params)
 
     # Save final model
     model_path = '/opt/ml/model/final_model.pt'

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Python Inference Service for Room Detection
-Called from Node.js backend - Now uses trained YOLO model from SageMaker
+Uses locally trained YOLO models - no AWS/S3 needed!
 """
 
 import sys
@@ -10,28 +10,31 @@ import base64
 from io import BytesIO
 import traceback
 import os
-import boto3
+from pathlib import Path
 from PIL import Image
 import numpy as np
 
-# Model configuration
-MODEL_S3_BUCKET = 'sagemaker-us-east-1-971422717446'
+# Get project root - use cwd() like comprehensive_test.py does
+# The Node.js spawn sets cwd to project root, so this should work
+PROJECT_ROOT = Path.cwd()
 
-# Available models
+# Available models - using LOCAL paths only
 MODELS = {
-    'yolo-v8s-sagemaker': {
-        's3_key': 'room-detection-yolo-1762552007/output/best.pt',  # 20-epoch Small model
-        'local_path': '/tmp/yolo_v8s_sagemaker.pt',
-        'description': 'YOLO v8 Small - 20 epochs'
-    },
     'yolo-v8l-200epoch': {
-        's3_key': 'room-detection-yolo-1762559721/output/best.pt',  # 200-epoch Large model
-        'local_path': '/tmp/yolo_v8l_200epoch.pt',
+        'local_path': PROJECT_ROOT / 'room_detection_training' / 'local_training_output' / 'yolo-v8l-200epoch' / 'weights' / 'best.pt',
         'description': 'YOLO v8 Large - 200 epochs (Best Model)'
     },
+    'yolo-v8l-200': {
+        'local_path': PROJECT_ROOT / 'room_detection_training' / 'local_training_output' / 'yolo-v8l-200' / 'room_detection' / 'weights' / 'best.pt',
+        'description': 'YOLO v8 Large - 200 epochs (Alternative)'
+    },
+    'yolo-v8s-sagemaker': {
+        # Use v8l-200epoch as fallback since we don't have v8s locally
+        'local_path': PROJECT_ROOT / 'room_detection_training' / 'local_training_output' / 'yolo-v8l-200epoch' / 'weights' / 'best.pt',
+        'description': 'YOLO v8 Large - 200 epochs (using v8l as v8s not available locally)'
+    },
     'default': {
-        's3_key': 'room-detection-yolo-1762559721/output/best.pt',  # Use best model as default
-        'local_path': '/tmp/yolo_v8l_200epoch.pt',
+        'local_path': PROJECT_ROOT / 'room_detection_training' / 'local_training_output' / 'yolo-v8l-200epoch' / 'weights' / 'best.pt',
         'description': 'YOLO v8 Large - 200 epochs (Default)'
     }
 }
@@ -41,193 +44,173 @@ loaded_models = {}
 
 def main():
     try:
-        # Read input from stdin (JSON)
-        input_data = json.loads(sys.stdin.read())
-
-        if input_data.get('action') == 'detect':
-            # Perform inference
-            image_data = base64.b64decode(input_data['image'])
-            model_id = input_data.get('model', 'default')
-            result = perform_inference(image_data, model_id)
-            print(json.dumps(result))
-        else:
-            print(json.dumps({'error': 'Unknown action'}))
+        # Read raw image bytes from stdin (no JSON, just binary data)
+        # First 4 bytes are model ID length, then model ID, then image data
+        model_id_length_bytes = sys.stdin.buffer.read(4)
+        if len(model_id_length_bytes) != 4:
+            raise ValueError("Invalid input format")
+        
+        model_id_length = int.from_bytes(model_id_length_bytes, 'big')
+        model_id_bytes = sys.stdin.buffer.read(model_id_length)
+        model_id = model_id_bytes.decode('utf-8') if model_id_bytes else 'default'
+        
+        # Read remaining image data
+        image_data = sys.stdin.buffer.read()
+        
+        if not image_data:
+            raise ValueError("No image data provided")
+        
+        sys.stderr.write(f"Received {len(image_data)} bytes of image data for model: {model_id}\n")
+        
+        # Perform inference
+        result = perform_inference(image_data, model_id)
+        # Only output JSON to stdout - all debug goes to stderr
+        print(json.dumps(result))
 
     except Exception as e:
+        # Send errors to stderr, JSON to stdout
+        sys.stderr.write(f"Error: {e}\n")
+        sys.stderr.write(traceback.format_exc())
         print(json.dumps({
             'error': str(e),
             'traceback': traceback.format_exc()
         }))
 
 def load_model(model_id='default'):
-    """Load the specified YOLO model from S3"""
+    """Load the specified YOLO model from local filesystem"""
     global loaded_models
 
     if model_id in loaded_models:
         return loaded_models[model_id]
 
     if model_id not in MODELS:
-        print(f"Unknown model {model_id}, using default")
+        sys.stderr.write(f"Unknown model {model_id}, using default\n")
         model_id = 'default'
 
     model_config = MODELS[model_id]
     local_path = model_config['local_path']
-    s3_key = model_config['s3_key']
     description = model_config.get('description', model_id)
 
     try:
-        print(f"Loading {model_id} model ({description})...")
+        # Convert Path object to string
+        model_path = str(local_path)
+        sys.stderr.write(f"Loading {model_id} model ({description})...\n")
+        sys.stderr.write(f"Model path: {model_path}\n")
 
-        # Download model from S3 if not exists
-        if not os.path.exists(local_path):
-            print(f"Downloading model from S3: s3://{MODEL_S3_BUCKET}/{s3_key}")
-            s3_client = boto3.client('s3')
-            
-            # Try downloading the .pt file directly first
-            try:
-                s3_client.download_file(MODEL_S3_BUCKET, s3_key, local_path)
-                print(f"Downloaded model file: {local_path}")
-            except Exception as e:
-                # If .pt file doesn't exist, try downloading model.tar.gz and extracting
-                print(f"Direct .pt download failed: {e}")
-                print("Trying model.tar.gz extraction...")
-                
-                # Try model.tar.gz in the same directory
-                tar_key = s3_key.replace('/best.pt', '/model.tar.gz').replace('/last.pt', '/model.tar.gz')
-                tar_path = local_path + '.tar.gz'
-                
-                try:
-                    s3_client.download_file(MODEL_S3_BUCKET, tar_key, tar_path)
-                    print(f"Downloaded tar.gz, extracting...")
-                    
-                    # Extract model.tar.gz
-                    import tarfile
-                    with tarfile.open(tar_path, 'r:gz') as tar:
-                        # Look for best.pt, last.pt, or any .pt file
-                        pt_files = [m for m in tar.getmembers() if m.name.endswith('.pt')]
-                        if pt_files:
-                            tar.extract(pt_files[0], os.path.dirname(local_path))
-                            extracted_path = os.path.join(os.path.dirname(local_path), pt_files[0].name)
-                            if extracted_path != local_path:
-                                os.rename(extracted_path, local_path)
-                            print(f"Extracted model: {local_path}")
-                        else:
-                            raise Exception("No .pt file found in model.tar.gz")
-                    
-                    # Clean up tar file
-                    os.remove(tar_path)
-                except Exception as tar_error:
-                    print(f"Tar.gz extraction also failed: {tar_error}")
-                    raise Exception(f"Could not download model: {e}")
+        # Check if model file exists
+        if not local_path.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
 
         # Load Ultralytics YOLO model
         from ultralytics import YOLO
-        model = YOLO(local_path)
+        sys.stderr.write(f"Loading YOLO model from {model_path}...\n")
+        model = YOLO(model_path)
         loaded_models[model_id] = model
-        print(f"Model {model_id} loaded successfully")
+        sys.stderr.write(f"Model {model_id} loaded successfully\n")
         return model
 
     except Exception as e:
-        print(f"Failed to load model {model_id}: {e}")
-        import traceback
-        traceback.print_exc()
+        sys.stderr.write(f"Failed to load model {model_id}: {e}\n")
+        traceback.print_exc(file=sys.stderr)
         # Try fallback to default model
         if model_id != 'default':
-            print("Trying default model...")
+            sys.stderr.write("Trying default model...\n")
             return load_model('default')
         raise Exception(f"Model loading failed: {e}")
 
 def perform_inference(image_data, model_id='default'):
     """Perform room detection inference with trained YOLO model"""
     try:
-        # Decode the base64 image
+        sys.stderr.write(f"Processing image: {len(image_data)} bytes with model {model_id}\n")
+        # Decode the image
         image = Image.open(BytesIO(image_data))
-
-        print(f"Processing image: {image.size[0]}x{image.size[1]} pixels with model {model_id}")
+        img_width, img_height = image.size
+        sys.stderr.write(f"Processing image: {img_width}x{img_height} pixels with model {model_id}\n")
 
         # Load the specified model
         model = load_model(model_id)
 
-        # Run inference
-        results = model(image, conf=0.25, iou=0.45)  # Standard YOLO thresholds
+        # Run inference - suppress YOLO's verbose output
+        sys.stderr.write("Running YOLO inference...\n")
+        # Set verbose=False and also redirect stdout temporarily to suppress YOLO output
+        import contextlib
+        import io
+        f = io.StringIO()
+        with contextlib.redirect_stdout(f):
+            results = model(image, conf=0.25, iou=0.45, verbose=False)  # Standard YOLO thresholds
+        # YOLO output is now captured in f, not printed to stdout
 
-        # Convert results to GeoJSON
-        features = []
-
+        # Convert image to numpy array for drawing
+        import numpy as np
+        img_array = np.array(image)
+        if len(img_array.shape) == 2:  # Grayscale
+            img_array = np.stack([img_array] * 3, axis=-1)
+        elif img_array.shape[2] == 4:  # RGBA
+            img_array = img_array[:, :, :3]  # Convert to RGB
+        
+        # Draw bounding boxes on image
+        from PIL import ImageDraw, ImageFont
+        draw = ImageDraw.Draw(image)
+        
+        # Convert to required JSON array format: [{id, bounding_box, name_hint}]
+        # bounding_box is normalized to 0-1000 range: [x_min, y_min, x_max, y_max]
+        detected_rooms = []
+        
         for result in results:
             boxes = result.boxes
             if boxes is not None:
                 for i, box in enumerate(boxes):
-                    # Get bounding box coordinates (normalized)
+                    # Get bounding box coordinates in pixels
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     conf = box.conf[0].item()
-
-                    # Convert to normalized coordinates
-                    img_width, img_height = image.size
-                    x1_norm = x1 / img_width
-                    y1_norm = y1 / img_height
-                    x2_norm = x2 / img_width
-                    y2_norm = y2 / img_height
-
-                    # Convert bbox to polygon (rectangle)
-                    polygon_coords = [
-                        [x1_norm, y1_norm],
-                        [x2_norm, y1_norm],
-                        [x2_norm, y2_norm],
-                        [x1_norm, y2_norm],
-                        [x1_norm, y1_norm]  # Close the polygon
+                    
+                    # Draw bounding box (green rectangle)
+                    draw.rectangle([x1, y1, x2, y2], outline='green', width=3)
+                    
+                    # Draw label
+                    label = f"Room {i+1}"
+                    try:
+                        font = ImageFont.truetype("arial.ttf", 20)
+                    except:
+                        font = ImageFont.load_default()
+                    draw.text((x1, y1 - 25), label, fill='green', font=font)
+                    
+                    # Convert to 0-1000 normalized range
+                    bounding_box = [
+                        int((x1 / img_width) * 1000),   # x_min
+                        int((y1 / img_height) * 1000),   # y_min
+                        int((x2 / img_width) * 1000),    # x_max
+                        int((y2 / img_height) * 1000)    # y_max
                     ]
-
-                    # Room name hints based on position/size
-                    if (x2_norm - x1_norm) > 0.3:  # Large rooms
-                        name_hint = "Living Room" if y1_norm < 0.5 else "Master Bedroom"
-                    elif conf > 0.8:
-                        name_hint = "Kitchen" if x1_norm < 0.3 else "Bathroom"
-                    else:
-                        name_hint = "Bedroom"
-
-                    features.append({
-                        'type': 'Feature',
-                        'properties': {
-                            'id': f'room_{i+1:03d}',
-                            'name_hint': name_hint,
-                            'confidence': round(conf, 3),
-                            'bbox_norm': [x1_norm, y1_norm, x2_norm, y2_norm]
-                        },
-                        'geometry': {
-                            'type': 'Polygon',
-                            'coordinates': [polygon_coords]
-                        }
+                    
+                    detected_rooms.append({
+                        'id': f'room_{i+1:03d}',
+                        'bounding_box': bounding_box,
+                        'name_hint': 'room'  # One-class model
                     })
 
-        print(f"Detection complete: {len(features)} rooms found")
+        sys.stderr.write(f"Detection complete: {len(detected_rooms)} rooms found\n")
 
-        # Convert to required JSON array format: [{id, bounding_box, name_hint}]
-        # bounding_box is normalized to 0-1000 range: [x_min, y_min, x_max, y_max]
-        detected_rooms = []
-        for i, feature in enumerate(features):
-            bbox_norm = feature['properties']['bbox_norm']  # [x1, y1, x2, y2] in 0-1 range
-            # Convert to 0-1000 range
-            bounding_box = [
-                int(bbox_norm[0] * 1000),  # x_min
-                int(bbox_norm[1] * 1000),  # y_min
-                int(bbox_norm[2] * 1000),  # x_max
-                int(bbox_norm[3] * 1000)   # y_max
-            ]
-            
-            detected_rooms.append({
-                'id': feature['properties']['id'],
-                'bounding_box': bounding_box,
-                'name_hint': feature['properties']['name_hint']
-            })
-
-        return detected_rooms
+        # Convert annotated image to base64
+        output_buffer = BytesIO()
+        image.save(output_buffer, format='PNG')
+        annotated_image_base64 = base64.b64encode(output_buffer.getvalue()).decode('utf-8')
+        
+        return {
+            'detections': detected_rooms,
+            'annotated_image': annotated_image_base64
+        }
 
     except Exception as e:
-        print(f"Inference failed: {e}")
+        sys.stderr.write(f"Inference failed: {e}\n")
+        traceback.print_exc(file=sys.stderr)
         # Fallback to mock results if model fails
-        print("Falling back to mock results...")
-        return get_mock_results(image_data)
+        sys.stderr.write("Falling back to mock results...\n")
+        mock_detections = get_mock_results(image_data)
+        return {
+            'detections': mock_detections,
+            'annotated_image': None  # No annotated image for mock results
+        }
 
 def get_mock_results(image_data):
     """Fallback mock results when model inference fails"""
@@ -268,7 +251,7 @@ def get_mock_results(image_data):
         detected_rooms.append({
             'id': feature['properties']['id'],
             'bounding_box': bounding_box,
-            'name_hint': feature['properties']['name_hint']
+            'name_hint': 'room'  # One-class model
         })
     
     return detected_rooms
