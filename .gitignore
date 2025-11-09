@@ -68,6 +68,7 @@ test_output/
 room_detection_training/outputs/
 room_detection_training/yolo_data/
 room_detection_training/local_training_output/
+room_detection_training/local_training_output_archive/
 room_detection_training/runs/
 room_detection_training/testing/
 room_detection_training/room_detection_test_*/
@@ -80,6 +81,11 @@ room_detection_training/*.avi
 room_detection_training/*.mp4
 room_detection_training/*.csv
 room_detection_training/*.pdf
+
+# YOLO datasets (images + labels - too large for git)
+room_detection_training/yolo_room_only/
+room_detection_training/yolo_room_seg/
+room_detection_training/yolo_room_wall_2class/
 
 # AWS
 .aws/

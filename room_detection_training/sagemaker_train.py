@@ -1,5 +1,6 @@
 """
-AWS SageMaker Training for YOLO11-seg Room Detection
+AWS SageMaker Training for YOLO Room Detection
+Supports both DETECTION (bbox) and SEGMENTATION (polygon) models
 Cloud training with enterprise GPUs for maximum speed
 """
 
@@ -12,6 +13,7 @@ from pathlib import Path
 import os
 import sys
 import time
+import argparse
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -35,27 +37,73 @@ INSTANCE_COUNT = 1
 FRAMEWORK_VERSION = '2.0.0'
 PYTHON_VERSION = 'py310'
 
-# Training hyperparameters - OPTIMIZED FOR YOLO LARGE MODEL + 200 EPOCHS
-HYPERPARAMETERS = {
-    'epochs': 200,  # Extended training for better convergence
-    'batch_size': 4,  # Smaller batch size for stability with large model
-    'imgsz': 640,  # Same as local training
-    'data': 'data.yaml',  # Will be created in container
-    'weights': 'yolov8l.pt',  # LARGE model for better accuracy
-    'workers': 4,  # More workers for multi-GPU setup
-    'patience': 20,  # More patience for longer training
-    'optimizer': 'AdamW',  # Same as local training
-    'lr0': 0.001,  # Lower learning rate for stability
-    'save_period': 25,  # Save checkpoints every 25 epochs (fewer saves)
-    'lrf': 0.01,  # Final learning rate
-    'momentum': 0.937,  # Momentum
-    'weight_decay': 0.0005,  # Weight decay
-    'warmup_epochs': 5.0,  # Longer warmup for large model
-    'box': 7.5,  # Box loss gain
-    'cls': 0.5,  # Classification loss gain
-    'dfl': 1.5,  # DFL loss gain
-    # Removed 'seg' parameter since we're doing detection, not segmentation
-}
+def get_hyperparameters(task='detect', model_size='l', imgsz=800):
+    """
+    Get hyperparameters based on task type
+    
+    Args:
+        task: 'detect' (bbox) or 'segment' (polygons)
+        model_size: 'n', 's', 'm', 'l', 'x' (default: 'l' for large)
+        imgsz: Training image size (default: 800)
+               - CubiCasa5K analysis: mean=972x866px, median=775x698px
+               - 640: Fast, good for 44% of images
+               - 800: Balanced, good for 27% of images (RECOMMENDED)
+               - 1024: High detail, only 13% are this large (may upscale)
+    
+    Models use COCO pretrained weights for transfer learning:
+    - yolov8l.pt = YOLOv8 Large pretrained on COCO (80 classes)
+    - yolov8l-seg.pt = YOLOv8 Large Segmentation pretrained on COCO
+    """
+    base_params = {
+        'epochs': 200,
+        'batch_size': 4,  # Will be adjusted based on model size and imgsz
+        'imgsz': imgsz,
+        'data': 'data.yaml',
+        'workers': 4,
+        'patience': 20,
+        'optimizer': 'AdamW',
+        'lr0': 0.001,  # Lower LR for transfer learning
+        'save_period': 25,
+        'lrf': 0.01,
+        'momentum': 0.937,
+        'weight_decay': 0.0005,
+        'warmup_epochs': 5.0,
+        'box': 7.5,
+        'cls': 0.5,
+        'dfl': 1.5,
+        'task': task,
+    }
+    
+    # Adjust batch size based on model size AND image size
+    # Larger images = more VRAM = smaller batch
+    imgsz_factor = (imgsz / 640) ** 2  # Quadratic scaling for memory
+    
+    # Set model weights and base batch size
+    if task == 'detect':
+        base_params['weights'] = f'yolov8{model_size}.pt'  # COCO pretrained detection
+        if model_size in ['x', 'l']:
+            base_batch = 4
+        elif model_size == 'm':
+            base_batch = 8
+        else:
+            base_batch = 16
+            
+    elif task == 'segment':
+        base_params['weights'] = f'yolov8{model_size}-seg.pt'  # COCO pretrained segmentation
+        # Segmentation is more memory intensive
+        if model_size in ['x', 'l']:
+            base_batch = 3
+        elif model_size == 'm':
+            base_batch = 6
+        else:
+            base_batch = 12
+        base_params['seg'] = 2.0  # Segmentation loss gain
+    
+    # Adjust batch size for image resolution
+    adjusted_batch = max(1, int(base_batch / imgsz_factor))
+    base_params['batch_size'] = adjusted_batch
+    
+    return base_params
 
 
 def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False):
@@ -63,6 +111,7 @@ def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False):
     print(f"Checking if data exists in s3://{s3_bucket}/{s3_prefix}")
 
     s3_client = boto3.client('s3')
+    from botocore.exceptions import ClientError
 
     # Check if data.yaml already exists (indicating data was uploaded)
     try:
@@ -72,8 +121,11 @@ def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False):
         else:
             print("Data already exists in S3, skipping upload")
             return f"s3://{s3_bucket}/{s3_prefix}"
-    except s3_client.exceptions.NoSuchKey:
-        print("Data not found in S3, uploading...")
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            print("Data not found in S3, uploading...")
+        else:
+            raise
 
     print(f"Uploading data to s3://{s3_bucket}/{s3_prefix}")
 
@@ -91,35 +143,48 @@ def upload_data_to_s3(s3_bucket, s3_prefix, local_data_dir, force_upload=False):
     return s3_data_path
 
 
-def create_data_yaml_for_sagemaker():
+def create_data_yaml_for_sagemaker(task='detect'):
     """Create data.yaml for SageMaker container"""
-    yaml_content = """
-# YOLO Data Configuration for SageMaker
+    yaml_content = f"""# YOLO Data Configuration for SageMaker
 path: /opt/ml/input/data/training  # SageMaker data channel
 train: train/images
 val: val/images
+test: test/images
 
 # Classes
 nc: 1
 names: ['room']
 
-# Detection task (using bounding boxes)
-task: detect
+# Task type
+task: {task}
 """
 
     # Save locally for upload
     with open('data.yaml', 'w') as f:
         f.write(yaml_content.strip())
 
-    print("[OK] Created data.yaml for SageMaker")
+    print(f"[OK] Created data.yaml for SageMaker (task: {task})")
     return 'data.yaml'
 
 
-def train_on_sagemaker():
-    """Launch SageMaker training job"""
-    print("Launching YOLO training on AWS SageMaker")
+def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz=800):
+    """
+    Launch SageMaker training job
+    
+    Args:
+        task: 'detect' for detection (bbox) or 'segment' for segmentation (polygons)
+        local_data_dir: Path to local YOLO dataset directory (auto-detected if None)
+        model_size: Model size: 'n', 's', 'm', 'l', 'x' (default: 'l' = large)
+        imgsz: Training resolution (default: 800, based on CubiCasa5K analysis)
+    """
+    print("="*60)
+    print("AWS SageMaker YOLO Training - Transfer Learning")
+    print("="*60)
+    print(f"Task: {task.upper()}")
+    print(f"Model: YOLOv8-{model_size.upper()} (COCO pretrained)")
+    print(f"Image size: {imgsz}x{imgsz}px")
     print(f"Instance: {INSTANCE_TYPE} ({INSTANCE_COUNT}x)")
-    print("=" * 60)
+    print("="*60)
 
     # Get SageMaker session and role
     print("Setting up IAM role...")
@@ -173,60 +238,108 @@ def train_on_sagemaker():
 
     # Prepare data
     print("\nPreparing training data...")
-
-    # Convert COCO to YOLO format (if not already done)
-    yolo_data_dir = Path("./yolo_data")
-    if not yolo_data_dir.exists():
-        print("Converting COCO data to YOLO format...")
-        from train_yolo import convert_coco_to_yolo_format, create_data_yaml
-
-        convert_coco_to_yolo_format(
-            "../../room_detection_dataset_coco/train/annotations.json",
-            yolo_data_dir / "train"
-        )
-        convert_coco_to_yolo_format(
-            "../../room_detection_dataset_coco/val/annotations.json",
-            yolo_data_dir / "val"
-        )
+    
+    # Auto-detect or use specified data directory based on TASK
+    if local_data_dir is None:
+        if task == 'detect':
+            local_data_dir = Path("./yolo_room_only")  # BBOX dataset
+            print("Auto-detected: DETECTION dataset (bounding boxes)")
+        elif task == 'segment':
+            local_data_dir = Path("./yolo_room_seg")  # POLYGON dataset
+            print("Auto-detected: SEGMENTATION dataset (polygons)")
+        else:
+            raise ValueError(f"Unknown task: {task}")
+    else:
+        local_data_dir = Path(local_data_dir)
+    
+    if not local_data_dir.exists():
+        print(f"\n[ERROR] Dataset not found: {local_data_dir.absolute()}")
+        print(f"\nDataset Requirements by Task:")
+        print("  - DETECT task → needs yolo_room_only/ (bbox labels)")
+        print("  - SEGMENT task → needs yolo_room_seg/ (polygon labels)")
+        print(f"\nPlease build the {task} dataset:")
+        if task == 'detect':
+            print("  python rebuild_yolo_dataset.py")
+        elif task == 'segment':
+            print("  python rebuild_yolo_seg_dataset.py")
+        sys.exit(1)
+    
+    print(f"Dataset path: {local_data_dir.absolute()}")
+    
+    # Verify data format matches task
+    sample_label = None
+    labels_dir = local_data_dir / 'train' / 'labels'
+    if labels_dir.exists():
+        label_files = list(labels_dir.glob('*.txt'))
+        if label_files:
+            with open(label_files[0], 'r') as f:
+                first_line = f.readline().strip()
+                coords = first_line.split()[1:]  # Skip class ID
+                if task == 'detect' and len(coords) == 4:
+                    print("[OK] Detected BBOX format (4 coords) - matches DETECT task")
+                elif task == 'segment' and len(coords) > 4:
+                    print(f"[OK] Detected POLYGON format ({len(coords)} coords) - matches SEGMENT task")
+                elif task == 'detect' and len(coords) > 4:
+                    print(f"[ERROR] Dataset has POLYGON labels but task is DETECT!")
+                    print("  Use --task segment or rebuild with rebuild_yolo_dataset.py")
+                    sys.exit(1)
+                elif task == 'segment' and len(coords) == 4:
+                    print(f"[ERROR] Dataset has BBOX labels but task is SEGMENT!")
+                    print("  Use --task detect or rebuild with rebuild_yolo_seg_dataset.py")
+                    sys.exit(1)
+    
+    # Verify dataset structure
+    required_dirs = ['train/images', 'train/labels', 'val/images', 'val/labels']
+    for req_dir in required_dirs:
+        dir_path = local_data_dir / req_dir
+        if not dir_path.exists():
+            print(f"[ERROR] Required directory missing: {dir_path}")
+            sys.exit(1)
+    
+    print("[OK] Dataset structure verified")
 
     # Create data.yaml for SageMaker
-    data_yaml = create_data_yaml_for_sagemaker()
+    data_yaml = create_data_yaml_for_sagemaker(task=task)
 
     # Copy the SageMaker data.yaml to overwrite the local one
     import shutil
-    shutil.copy('data.yaml', str(yolo_data_dir / 'data.yaml'))
-    print("[OK] Overwrote local data.yaml with SageMaker version")
+    shutil.copy('data.yaml', str(local_data_dir / 'data.yaml'))
+    print("[OK] Updated data.yaml in dataset directory")
 
     # Upload data to S3
+    s3_prefix = f'room-detection-training/data-{task}'
     s3_data_path = upload_data_to_s3(
         bucket,
-        'room-detection-training/data',
-        str(yolo_data_dir)
+        s3_prefix,
+        str(local_data_dir)
     )
 
-    # Upload YOLO weights (if not using pretrained)
-    # For now, we'll download in the container
-
+    # Get hyperparameters for task
+    hyperparameters = get_hyperparameters(task=task, model_size=model_size, imgsz=imgsz)
+    
     # Create PyTorch estimator
     print("\nCreating SageMaker estimator...")
+    print(f"Model: {hyperparameters['weights']} (COCO pretrained → transfer learning)")
+    print(f"Task: {task}")
+    print(f"Image size: {imgsz}x{imgsz}px")
+    print(f"Batch size: {hyperparameters['batch_size']} (auto-adjusted for {imgsz}px)")
+    print(f"Epochs: {hyperparameters['epochs']}")
 
     estimator = PyTorch(
-        entry_point='train_yolo_sagemaker.py',  # We'll create this
-        source_dir=None,  # Don't upload source directory - script is standalone
+        entry_point='train_yolo_sagemaker.py',
+        source_dir=None,
         role=role,
         instance_count=INSTANCE_COUNT,
         instance_type=INSTANCE_TYPE,
         framework_version=FRAMEWORK_VERSION,
         py_version=PYTHON_VERSION,
-        hyperparameters=HYPERPARAMETERS,
-        # Use on-demand instances for long training (200 epochs) to avoid spot interruptions
-        use_spot_instances=False,  # Changed to False for stability
-        max_run=43200,    # 12 hours training time (for 200 epochs on large model)
-        # Enable multi-GPU training on single instance with multiple GPUs
+        hyperparameters=hyperparameters,
+        use_spot_instances=False,
+        max_run=43200,  # 12 hours
         distribution={
             'pytorch': {
                 'enabled': True,
-                'processes_per_host': 2  # 2 GPUs on g5.2xlarge
+                'processes_per_host': 2
             }
         },
     )
@@ -234,30 +347,32 @@ def train_on_sagemaker():
     # Launch training
     print("\nStarting training job...")
 
-    job_name = f'room-detection-yolo-{int(time.time())}'
+    job_name = f'room-{task}-yolo-{int(time.time())}'
 
     estimator.fit(
         inputs={'training': s3_data_path},
         job_name=job_name,
-        wait=False  # Don't wait for completion
+        wait=False
     )
 
     print(f"[OK] Training job launched: {job_name}")
     print(f"Monitor progress at: https://{sess.boto_region_name}.console.aws.amazon.com/sagemaker/home?region={sess.boto_region_name}#/jobs/{job_name}")
 
-    # Estimate costs and time for LARGE MODEL + 200 EPOCHS (on-demand)
+    # Estimate costs and time
     hourly_rate = get_instance_price(INSTANCE_TYPE)
-    estimated_hours = 8.0  # A10G x2 GPUs with large model: ~8 hours for 200 epochs
+    if task == 'detect':
+        estimated_hours = 8.0  # Detection: ~8 hours
+    else:
+        estimated_hours = 10.0  # Segmentation: ~10 hours (more complex)
     estimated_cost = hourly_rate * estimated_hours
 
-    print(f"\nCost Estimate ({INSTANCE_TYPE}) - YOLO Large 200 Epochs:")
+    print(f"\nCost Estimate ({INSTANCE_TYPE}) - {task.upper()}:")
     print(f"- Instance: {INSTANCE_TYPE} (${hourly_rate}/hour on-demand)")
-    print("- Multi-GPU training: 2x A10G GPUs for faster convergence")
-    print("- Model: YOLOv8 Large (better accuracy than Small model)")
-    print("- On-demand pricing: No interruptions, guaranteed completion")
+    print("- Multi-GPU training: 2x A10G GPUs")
+    print(f"- Model: {hyperparameters['weights']}")
+    print(f"- Task: {task}")
     print(f"- Estimated training time: {estimated_hours} hours")
-    print(f"- Estimated cost: ${estimated_cost:.2f} (on-demand pricing)")
-    print(f"- Expected improvement: 15-25% better mAP vs Small model")
+    print(f"- Estimated cost: ${estimated_cost:.2f}")
 
     return job_name, estimator
 
@@ -329,9 +444,11 @@ def main():
     parser.add_argument('--box', type=float, default=7.5)
     parser.add_argument('--cls', type=float, default=0.5)
     parser.add_argument('--dfl', type=float, default=1.5)
+    parser.add_argument('--seg', type=float, default=2.0)  # Segmentation loss (ignored for detect)
+    parser.add_argument('--task', type=str, default='detect', choices=['detect', 'segment'])
     args = parser.parse_args()
 
-    print(f"Training config: {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}")
+    print(f"Training config: task={args.task}, {args.epochs} epochs, batch {args.batch_size}, size {args.imgsz}")
 
     # Import after installation
     from ultralytics import YOLO, settings
@@ -349,7 +466,7 @@ def main():
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
     # Load model
-    print("\\nLoading YOLO detection model...")
+    print(f"\\nLoading YOLO {args.task} model: {args.weights}...")
     model = YOLO(args.weights)
 
     # Update data path for SageMaker
@@ -370,29 +487,34 @@ def main():
 
     # Training
     print("\\nStarting training...")
-    results = model.train(
-        data=args.data,
-        epochs=args.epochs,
-        batch=args.batch_size,
-        imgsz=args.imgsz,
-        device=device,
-        workers=args.workers,
-        project='/opt/ml/model',
-        name='room_detection',
-        save=True,
-        save_period=args.save_period,
-        patience=args.patience,
-        optimizer=args.optimizer,
-        lr0=args.lr0,
-        lrf=args.lrf,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-        warmup_epochs=args.warmup_epochs,
-        box=args.box,
-        cls=args.cls,
-        dfl=args.dfl,
-        # Removed seg parameter for detection model
-    )
+    train_params = {
+        'data': args.data,
+        'epochs': args.epochs,
+        'batch': args.batch_size,
+        'imgsz': args.imgsz,
+        'device': device,
+        'workers': args.workers,
+        'project': '/opt/ml/model',
+        'name': f'room_{args.task}',
+        'save': True,
+        'save_period': args.save_period,
+        'patience': args.patience,
+        'optimizer': args.optimizer,
+        'lr0': args.lr0,
+        'lrf': args.lrf,
+        'momentum': args.momentum,
+        'weight_decay': args.weight_decay,
+        'warmup_epochs': args.warmup_epochs,
+        'box': args.box,
+        'cls': args.cls,
+        'dfl': args.dfl,
+    }
+    
+    # Add segmentation loss if training segmentation model
+    if args.task == 'segment':
+        train_params['seg'] = args.seg
+    
+    results = model.train(**train_params)
 
     # Save final model
     model_path = '/opt/ml/model/final_model.pt'
@@ -422,11 +544,39 @@ if __name__ == "__main__":
 
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='AWS SageMaker YOLO Training',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Image Size Recommendations (based on CubiCasa5K analysis):
+  640:  Fast, good baseline (YOLO default)
+  800:  RECOMMENDED - balanced speed/quality for CubiCasa5K
+  1024: High detail, slower training (only 13% of images are this large)
+  1280: Maximum detail, very slow (only 9% of images are this large)
+
+CubiCasa5K Stats: Mean 972x866px, Median 775x698px
+        """
+    )
+    parser.add_argument('--task', type=str, default='detect', choices=['detect', 'segment'],
+                       help='Task type: detect (bbox) or segment (polygons)')
+    parser.add_argument('--model-size', type=str, default='l', choices=['n', 's', 'm', 'l', 'x'],
+                       help='Model size: n=nano, s=small, m=medium, l=large, x=xlarge (default: l)')
+    parser.add_argument('--imgsz', type=int, default=800,
+                       help='Training image size in pixels (default: 800, based on dataset analysis)')
+    parser.add_argument('--data-dir', type=str, default=None,
+                       help='Override auto-detected data directory')
+    args = parser.parse_args()
+    
     print("AWS SageMaker YOLO Training Setup")
-    print("=" * 40)
+    print("=" * 60)
+    print(f"Task: {args.task.upper()}")
+    print(f"Model: YOLOv8-{args.model_size.upper()} (COCO pretrained)")
+    print(f"Image size: {args.imgsz}x{args.imgsz}px")
+    print("=" * 60)
 
     # Check AWS credentials and permissions
-    print("Checking AWS credentials...")
+    print("\nChecking AWS credentials...")
     try:
         import boto3
         sts = boto3.client('sts')
@@ -450,20 +600,29 @@ if __name__ == "__main__":
         print("   export AWS_DEFAULT_REGION=us-east-1")
         print("3. IAM role (if on EC2/SageMaker)")
         print("4. ~/.aws/credentials file")
-        print("\n[TIP] Since Gauntlet AI is paying, ask your team for:")
-        print("   - AWS console access")
-        print("   - IAM user with SageMaker permissions")
-        print("   - Budget approval confirmation")
         sys.exit(1)
 
     # Create training script
     create_sagemaker_training_script()
 
     # Launch training
-    job_name, estimator = train_on_sagemaker()
+    job_name, estimator = train_on_sagemaker(
+        task=args.task,
+        local_data_dir=args.data_dir,
+        model_size=args.model_size,
+        imgsz=args.imgsz
+    )
 
-    print("\\n Next steps:")
+    print("\nNext steps:")
     print("1. Monitor training at the SageMaker console URL above")
-    print("2. Training will take 2-4 hours with cloud GPU")
+    if args.task == 'detect':
+        time_est = 8.0 * (args.imgsz / 640) ** 2  # Scale with resolution
+        print(f"2. Detection training: ~{time_est:.1f} hours at {args.imgsz}px")
+    else:
+        time_est = 10.0 * (args.imgsz / 640) ** 2
+        print(f"2. Segmentation training: ~{time_est:.1f} hours at {args.imgsz}px")
     print("3. Download trained model from S3 when complete")
-    print("4. Deploy model for inference testing")
+    print("4. Test model with comprehensive_test.py")
+    print("\nUsage examples:")
+    print("  python sagemaker_train.py --task detect --model-size l --imgsz 800")
+    print("  python sagemaker_train.py --task segment --model-size l --imgsz 1024")
