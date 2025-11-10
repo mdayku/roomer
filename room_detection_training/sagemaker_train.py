@@ -99,7 +99,7 @@ def get_hyperparameters(task='detect', model_size='l', imgsz=800):
             base_batch = 6
         else:
             base_batch = 12
-        base_params['seg'] = 2.0  # Segmentation loss gain
+        # Note: 'seg' loss weight is handled internally by ultralytics, don't pass as hyperparam
     
     # Adjust batch size for image resolution
     adjusted_batch = max(1, int(base_batch / imgsz_factor))
@@ -231,7 +231,7 @@ task: {task}
     return 'data.yaml'
 
 
-def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz=800):
+def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz=800, s3_prefix=None):
     """
     Launch SageMaker training job
     
@@ -303,16 +303,30 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     # Prepare data
     print("\nPreparing training data...")
     
-    # Auto-detect or use specified data directory based on TASK
+    # Auto-detect or use specified data directory based on TASK and S3_PREFIX
     if local_data_dir is None:
-        if task == 'detect':
-            local_data_dir = Path("./yolo_room_only")  # BBOX dataset
-            print("Auto-detected: DETECTION dataset (bounding boxes)")
-        elif task == 'segment':
-            local_data_dir = Path("./yolo_room_seg")  # POLYGON dataset
-            print("Auto-detected: SEGMENTATION dataset (polygons)")
-        else:
-            raise ValueError(f"Unknown task: {task}")
+        # First try to infer from S3 prefix if provided
+        if s3_prefix:
+            if '2class' in s3_prefix or '2-class' in s3_prefix:
+                local_data_dir = Path("./yolo_room_wall_2class")
+                print("Auto-detected: 2-CLASS dataset (room + wall) from S3 prefix")
+            elif 'segment' in s3_prefix or 'seg' in s3_prefix:
+                local_data_dir = Path("./yolo_room_seg")
+                print("Auto-detected: SEGMENTATION dataset (polygons) from S3 prefix")
+            elif '1class' in s3_prefix or 'detect' in s3_prefix:
+                local_data_dir = Path("./yolo_room_only")
+                print("Auto-detected: 1-CLASS dataset (room only) from S3 prefix")
+        
+        # Fallback to task-based detection if no S3 prefix or couldn't infer
+        if local_data_dir is None:
+            if task == 'detect':
+                local_data_dir = Path("./yolo_room_only")  # BBOX dataset (default to 1-class)
+                print("Auto-detected: DETECTION dataset (bounding boxes, 1-class)")
+            elif task == 'segment':
+                local_data_dir = Path("./yolo_room_seg")  # POLYGON dataset
+                print("Auto-detected: SEGMENTATION dataset (polygons)")
+            else:
+                raise ValueError(f"Unknown task: {task}")
     else:
         local_data_dir = Path(local_data_dir)
     
@@ -423,7 +437,7 @@ def train_on_sagemaker(task='detect', local_data_dir=None, model_size='l', imgsz
     
     # Create PyTorch estimator
     print("\nCreating SageMaker estimator...")
-    print(f"Model: {hyperparameters['weights']} (COCO pretrained → transfer learning)")
+    print(f"Model: {hyperparameters['weights']} (COCO pretrained -> transfer learning)")
     print(f"Task: {task}")
     print(f"Image size: {imgsz}x{imgsz}px")
     print(f"Batch size: {hyperparameters['batch_size']} (auto-adjusted for {imgsz}px)")
@@ -580,7 +594,6 @@ def main():
     parser.add_argument('--box', type=float, default=7.5)
     parser.add_argument('--cls', type=float, default=0.5)
     parser.add_argument('--dfl', type=float, default=1.5)
-    parser.add_argument('--seg', type=float, default=2.0)  # Segmentation loss (ignored for detect)
     parser.add_argument('--task', type=str, default='detect', choices=['detect', 'segment'])
     args = parser.parse_args()
 
@@ -646,9 +659,10 @@ def main():
         'dfl': args.dfl,
     }
     
-    # Add segmentation loss if training segmentation model
-    if args.task == 'segment':
-        train_params['seg'] = args.seg
+    # Note: Segmentation loss weights are handled internally by ultralytics
+    print(f"\\nTraining parameters:")
+    for k, v in train_params.items():
+        print(f"  {k}: {v}")
     
     results = model.train(**train_params)
 
@@ -750,7 +764,8 @@ CubiCasa5K Stats: Mean 972x866px, Median 775x698px
         task=args.task,
         local_data_dir=args.data_dir,
         model_size=args.model_size,
-        imgsz=args.imgsz
+        imgsz=args.imgsz,
+        s3_prefix=args.s3_prefix
     )
 
     print("\nNext steps:")

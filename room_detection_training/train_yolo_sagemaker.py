@@ -51,7 +51,6 @@ def main():
     parser.add_argument('--box', type=float, default=7.5)
     parser.add_argument('--cls', type=float, default=0.5)
     parser.add_argument('--dfl', type=float, default=1.5)
-    parser.add_argument('--seg', type=float, default=2.0)  # Segmentation loss (ignored for detect)
     parser.add_argument('--task', type=str, default='detect', choices=['detect', 'segment'])
     args = parser.parse_args()
 
@@ -117,9 +116,10 @@ def main():
         'dfl': args.dfl,
     }
     
-    # Add segmentation loss if training segmentation model
-    if args.task == 'segment':
-        train_params['seg'] = args.seg
+    # Note: Segmentation loss weights are handled internally by ultralytics
+    print(f"\nTraining parameters:")
+    for k, v in train_params.items():
+        print(f"  {k}: {v}")
     
     results = model.train(**train_params)
 

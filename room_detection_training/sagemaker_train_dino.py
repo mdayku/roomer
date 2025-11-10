@@ -38,19 +38,19 @@ FRAMEWORK_VERSION = '2.0.0'
 PYTHON_VERSION = 'py310'
 
 # Training hyperparameters - OPTIMIZED FOR A10G (cost-effective)
-# Set to 5 epochs for initial test run
+# Set to 20 epochs for fair comparison baseline
 HYPERPARAMETERS = {
-    'epochs': 5,  # Test run with 5 epochs (change to 50 for full training)
+    'epochs': 20,  # 20 epochs for baseline comparison (change to 50 for full training)
     'batch_size': 2,  # Small batch for A10G (24GB VRAM per GPU)
     'lr': 0.0001,  # Lower learning rate for transformer
     'lr_backbone': 0.00001,  # Even lower for backbone
     'weight_decay': 0.0001,
-    'lr_drop': 4,  # Learning rate drop at epoch 4 (for 5-epoch test)
+    'lr_drop': 15,  # Learning rate drop at epoch 15 (for 20-epoch run)
     'clip_max_norm': 0.1,  # Gradient clipping
-    'num_classes': 1,  # Single class: room
+    'num_classes': 2,  # Two classes: wall + room
     'hidden_dim': 256,  # Hidden dimension (can reduce to 192 if OOM)
     'nheads': 8,  # Number of attention heads
-    'num_queries': 300,  # Number of object queries
+    'num_queries': 300,  # Number of object queries (increased for 2 classes)
     # Note: Don't include frozen_weights if None - it causes argparse errors
 }
 
@@ -62,8 +62,8 @@ def upload_coco_data_to_s3(s3_bucket, s3_prefix, coco_data_dir, force_upload=Fal
     s3_client = boto3.client('s3')
     coco_data_dir = Path(coco_data_dir)
     
-    # Check if annotations already exist
-    train_ann_key = f"{s3_prefix}/train/annotations.json"
+    # Check if annotations already exist (DINO format)
+    train_ann_key = f"{s3_prefix}/annotations/instances_train2017.json"
     try:
         s3_client.head_object(Bucket=s3_bucket, Key=train_ann_key)
         if force_upload:
@@ -79,20 +79,70 @@ def upload_coco_data_to_s3(s3_bucket, s3_prefix, coco_data_dir, force_upload=Fal
     
     print(f"Uploading COCO dataset to s3://{s3_bucket}/{s3_prefix}")
     
-    # Upload annotations only (images should already be in S3 or will be loaded from local paths)
-    print("Uploading annotations (this should be quick)...")
-    for split in ['train', 'val', 'test']:
-        ann_file = coco_data_dir / split / 'annotations.json'
-        if ann_file.exists():
-            s3_key = f"{s3_prefix}/{split}/annotations.json"
-            print(f"  Uploading {split} annotations...")
-            s3_client.upload_file(str(ann_file), s3_bucket, s3_key)
-            print(f"  [OK] {split} annotations uploaded")
+    # Upload both annotations and images (DINO format!)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    # Skip image upload for now - images are likely already in S3 or will be loaded from local paths
-    # The COCO annotations reference image paths, and SageMaker will handle loading them
-    print("[INFO] Skipping image upload - images will be loaded from local paths or existing S3 location")
-    print("[INFO] If images need to be uploaded, they should be in the same S3 bucket structure")
+    # Collect all files to upload
+    files_to_upload = []
+    
+    # Annotations (DINO expects: annotations/instances_train2017.json)
+    annotations_dir = coco_data_dir / 'annotations'
+    if annotations_dir.exists():
+        for ann_file in annotations_dir.glob('*.json'):
+            s3_key = f"{s3_prefix}/annotations/{ann_file.name}"
+            files_to_upload.append((str(ann_file), s3_key))
+    
+    # Images (DINO expects: train2017/*.png, val2017/*.png)
+    for split_dir in ['train2017', 'val2017', 'test2017']:
+        images_dir = coco_data_dir / split_dir
+        if images_dir.exists():
+            for img_file in images_dir.glob('*.png'):
+                s3_key = f"{s3_prefix}/{split_dir}/{img_file.name}"
+                files_to_upload.append((str(img_file), s3_key))
+            for img_file in images_dir.glob('*.jpg'):
+                s3_key = f"{s3_prefix}/{split_dir}/{img_file.name}"
+                files_to_upload.append((str(img_file), s3_key))
+    
+    if not files_to_upload:
+        print("[ERROR] No files found to upload!")
+        return None
+    
+    print(f"Found {len(files_to_upload)} files to upload")
+    print("Using parallel uploads (10 threads) for faster transfer...")
+    
+    # Parallel upload
+    uploaded = 0
+    skipped = 0
+    
+    def upload_file(local_path, s3_key):
+        # Check if file exists
+        try:
+            s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+            return ('skip', s3_key)
+        except ClientError as e:
+            if e.response['Error']['Code'] != '404':
+                raise
+        
+        # Upload
+        s3_client.upload_file(local_path, s3_bucket, s3_key)
+        return ('upload', s3_key)
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(upload_file, local, s3): (local, s3) for local, s3 in files_to_upload}
+        
+        for idx, future in enumerate(as_completed(futures), 1):
+            action, s3_key = future.result()
+            if action == 'upload':
+                uploaded += 1
+            else:
+                skipped += 1
+            
+            if idx % 200 == 0:
+                print(f"  Progress: {idx}/{len(files_to_upload)} files processed ({idx/len(files_to_upload)*100:.1f}%)")
+    
+    print(f"\n[OK] Data sync complete: s3://{s3_bucket}/{s3_prefix}")
+    print(f"  - Uploaded: {uploaded} new files")
+    print(f"  - Skipped: {skipped} existing files")
     
     s3_data_path = f"s3://{s3_bucket}/{s3_prefix}"
     print(f"[OK] COCO data uploaded to {s3_data_path}")
@@ -146,11 +196,11 @@ def train_on_sagemaker():
     
     # Prepare COCO data
     print("\nPreparing COCO dataset...")
-    # Try multiple possible paths
+    # Look for coco_room_dino_restructured (DINO-compatible COCO format!)
     possible_paths = [
-        Path("../../room_detection_dataset_coco"),  # From room_detection_training/
-        Path("../room_detection_dataset_coco"),     # From repo root
-        Path("room_detection_dataset_coco"),        # Current dir
+        Path("./coco_room_dino_restructured"),                    # From room_detection_training/
+        Path("../coco_room_dino_restructured"),                   # From repo root  
+        Path("room_detection_training/coco_room_dino_restructured"),  # Current dir
     ]
     coco_data_dir = None
     for path in possible_paths:
@@ -161,23 +211,32 @@ def train_on_sagemaker():
     if not coco_data_dir:
         # Try absolute path from script location
         script_dir = Path(__file__).parent
-        repo_root = script_dir.parent
-        coco_data_dir = repo_root / 'room_detection_dataset_coco'
+        coco_data_dir = script_dir / 'coco_room_dino'
     
     if not coco_data_dir.exists():
         print(f"[ERROR] COCO dataset not found at: {coco_data_dir}")
-        print("Please ensure the COCO dataset exists at this path")
+        print("Please run: python prepare_coco_for_dino.py first!")
         sys.exit(1)
     
-    train_ann = coco_data_dir / "train" / "annotations.json"
-    val_ann = coco_data_dir / "val" / "annotations.json"
+    # Verify DINO-format structure
+    train_ann = coco_data_dir / "annotations" / "instances_train2017.json"
+    val_ann = coco_data_dir / "annotations" / "instances_val2017.json"
+    train_images = coco_data_dir / "train2017"
     
     if not train_ann.exists() or not val_ann.exists():
         print(f"[ERROR] COCO annotations not found!")
         print(f"Expected: {train_ann} and {val_ann}")
+        print("Please run: python prepare_coco_for_dino.py first!")
+        sys.exit(1)
+    
+    if not train_images.exists() or len(list(train_images.glob('*.png'))) == 0:
+        print(f"[ERROR] COCO images not found!")
+        print(f"Expected images in: {train_images}")
+        print("Please run: python restructure_for_dino.py first!")
         sys.exit(1)
     
     print(f"[OK] Found COCO dataset at: {coco_data_dir}")
+    print(f"[OK] Verified {len(list(train_images.glob('*.png')))} training images")
     
     # Create training script first (needed for estimator)
     create_dino_training_script()
@@ -214,7 +273,7 @@ def train_on_sagemaker():
         bucket,
         'room-detection-dino/data',
         str(coco_data_dir),
-        force_upload=False
+        force_upload=True  # Force re-upload to replace old data
     )
     
     # Create PyTorch estimator
@@ -351,7 +410,8 @@ def main():
         "numpy",
         "pycocotools",
         "matplotlib",
-        "tqdm"
+        "tqdm",
+        "yapf<0.40"  # Pin yapf to avoid "verify" parameter error in DINO's slconfig.py
     ]
     
     for package in packages:
@@ -401,6 +461,64 @@ def main():
             print("[OK] DINO requirements installed")
     else:
         print(f"[WARN] DINO requirements.txt not found at {req_file}")
+    
+    # Compile CUDA operators BEFORE importing DINO
+    print("\\n[INFO] Compiling DINO's custom CUDA operators...")
+    ops_dir = dino_dir / "models" / "dino" / "ops"
+    if ops_dir.exists():
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(ops_dir))
+            print(f"[INFO] Changed to ops directory: {ops_dir}")
+            
+            # Run the compilation script
+            compile_script = ops_dir / "make.sh"
+            if compile_script.exists():
+                result = subprocess.run(
+                    ["bash", str(compile_script)],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if result.returncode == 0:
+                    print("[OK] CUDA ops compiled successfully via make.sh")
+                else:
+                    print(f"[WARN] make.sh failed, trying setup.py...")
+                    print(f"  stderr: {result.stderr[-300:]}")
+            
+            # Fallback: try setup.py directly
+            setup_script = ops_dir / "setup.py"
+            if setup_script.exists():
+                result = subprocess.run([
+                    sys.executable, str(setup_script), "build_ext", "--inplace"
+                ], capture_output=True, text=True, timeout=600)
+                
+                if result.returncode == 0:
+                    print("[OK] CUDA ops compiled successfully via setup.py")
+                else:
+                    print(f"[ERROR] Failed to compile CUDA ops:")
+                    print(f"  stdout: {result.stdout[-500:]}")
+                    print(f"  stderr: {result.stderr[-500:]}")
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    sys.exit(1)
+            else:
+                print(f"[ERROR] Neither make.sh nor setup.py found in {ops_dir}")
+                sys.stdout.flush()
+                sys.stderr.flush()
+                sys.exit(1)
+        finally:
+            os.chdir(original_cwd)
+            print(f"[INFO] Changed back to: {original_cwd}")
+        
+        # Add ops directory to Python path so compiled CUDA ops can be imported
+        sys.path.insert(0, str(ops_dir))
+        print(f"[INFO] Added ops directory to Python path: {ops_dir}")
+    else:
+        print(f"[ERROR] CUDA ops directory not found: {ops_dir}")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(1)
     
     # Parse arguments
     # Use allow_abbrev=False and ignore unknown args to handle SageMaker's hyperparameter passing
@@ -515,7 +633,6 @@ def main():
             print(f"[DEBUG] DINO directory contents: {list(dino_dir.iterdir())[:10]}")
         
         # Change to DINO directory for import
-        import os
         original_cwd = os.getcwd()
         os.chdir(str(dino_dir))
         print(f"[DEBUG] Changed to DINO directory: {os.getcwd()}")
@@ -528,32 +645,23 @@ def main():
         
         print("[OK] DINO main module imported successfully")
         
-        # Create args object compatible with DINO's main.py
-        dino_parser = get_args_parser()
-        
-        # Build args for DINO
-        dino_args = dino_parser.parse_args([])  # Empty list, we'll set values directly
-        
-        # Set paths for SageMaker
-        dino_args.coco_path = str(data_root)
-        dino_args.output_dir = str(output_dir)
-        dino_args.dataset_file = 'coco'
-        
-        # Set config file path (will be copied to container)
-        # Check if custom config was included in source
+        # Check which config file exists FIRST (before parsing args)
         custom_config_path = Path('/opt/ml/code/DINO/config/DINO/DINO_4scale_room_detection.py')
         base_config_path = dino_dir / 'config' / 'DINO' / 'DINO_4scale.py'
         
+        config_file = None
+        config_options = []
+        
         if custom_config_path.exists():
-            dino_args.config_file = str(custom_config_path)
+            config_file = str(custom_config_path)
             print(f"[OK] Using custom room detection config from source")
         elif (dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py').exists():
-            dino_args.config_file = str(dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py')
+            config_file = str(dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py')
             print(f"[OK] Using custom room detection config from cloned repo")
         elif base_config_path.exists():
             # Fallback: use base config with options override
-            dino_args.config_file = str(base_config_path)
-            dino_args.options = [
+            config_file = str(base_config_path)
+            config_options = [
                 f'num_classes={args.num_classes}',
                 f'batch_size={args.batch_size}',
                 f'epochs={args.epochs}',
@@ -575,6 +683,35 @@ def main():
             sys.stderr.flush()
             sys.exit(1)
         
+        # Build command line args for DINO's parser (MUST include --config_file!)
+        dino_cmd_args = [
+            '--config_file', config_file,
+            '--coco_path', str(data_root),
+            '--output_dir', str(output_dir),
+            '--dataset_file', 'coco',
+        ]
+        
+        # CRITICAL: Always pass num_classes via --options to override config defaults
+        # DINO doesn't accept --num_classes directly, must use --options
+        override_options = [
+            f'num_classes={args.num_classes}',
+            f'dn_labelbook_size={args.num_classes}',  # Must match num_classes
+        ]
+        
+        # Add base config options if using base config
+        if config_options:
+            override_options.extend(config_options)
+        
+        # Add all options to command
+        if override_options:
+            dino_cmd_args.extend(['--options'] + override_options)
+        
+        # Create args object compatible with DINO's main.py
+        dino_parser = get_args_parser()
+        
+        # Parse with actual arguments (not empty list!)
+        dino_args = dino_parser.parse_args(dino_cmd_args)
+        
         # Handle distributed training (SageMaker sets these)
         dino_args.world_size = int(os.environ.get('SM_NUM_GPUS', 1))
         dino_args.dist_url = 'env://'
@@ -595,13 +732,15 @@ def main():
         dino_args.find_unused_params = False
         
         print(f"[OK] Starting DINO training with config:")
-        print(f"  Config file: {dino_args.config_file}")
+        print(f"  Config file: {config_file}")
         print(f"  COCO path: {dino_args.coco_path}")
         print(f"  Output dir: {dino_args.output_dir}")
         print(f"  Epochs: {args.epochs}")
         print(f"  Batch size: {args.batch_size}")
         print(f"  Num classes: {args.num_classes}")
         print(f"  World size (GPUs): {dino_args.world_size}")
+        if config_options:
+            print(f"  Config options: {', '.join(config_options[:3])}...")
         
         # Run DINO training
         dino_main(dino_args)

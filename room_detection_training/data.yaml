@@ -9,4 +9,4 @@ nc: 1
 names: ['room']
 
 # Task type
-task: detect
+task: segment

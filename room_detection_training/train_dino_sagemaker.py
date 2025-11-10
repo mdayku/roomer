@@ -36,7 +36,8 @@ def main():
         "numpy",
         "pycocotools",
         "matplotlib",
-        "tqdm"
+        "tqdm",
+        "yapf<0.40"  # Pin yapf to avoid "verify" parameter error in DINO's slconfig.py
     ]
     
     for package in packages:
@@ -86,6 +87,64 @@ def main():
             print("[OK] DINO requirements installed")
     else:
         print(f"[WARN] DINO requirements.txt not found at {req_file}")
+    
+    # Compile CUDA operators BEFORE importing DINO
+    print("\n[INFO] Compiling DINO's custom CUDA operators...")
+    ops_dir = dino_dir / "models" / "dino" / "ops"
+    if ops_dir.exists():
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(ops_dir))
+            print(f"[INFO] Changed to ops directory: {ops_dir}")
+            
+            # Run the compilation script
+            compile_script = ops_dir / "make.sh"
+            if compile_script.exists():
+                result = subprocess.run(
+                    ["bash", str(compile_script)],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if result.returncode == 0:
+                    print("[OK] CUDA ops compiled successfully via make.sh")
+                else:
+                    print(f"[WARN] make.sh failed, trying setup.py...")
+                    print(f"  stderr: {result.stderr[-300:]}")
+            
+            # Fallback: try setup.py directly
+            setup_script = ops_dir / "setup.py"
+            if setup_script.exists():
+                result = subprocess.run([
+                    sys.executable, str(setup_script), "build_ext", "--inplace"
+                ], capture_output=True, text=True, timeout=600)
+                
+                if result.returncode == 0:
+                    print("[OK] CUDA ops compiled successfully via setup.py")
+                else:
+                    print(f"[ERROR] Failed to compile CUDA ops:")
+                    print(f"  stdout: {result.stdout[-500:]}")
+                    print(f"  stderr: {result.stderr[-500:]}")
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    sys.exit(1)
+            else:
+                print(f"[ERROR] Neither make.sh nor setup.py found in {ops_dir}")
+                sys.stdout.flush()
+                sys.stderr.flush()
+                sys.exit(1)
+        finally:
+            os.chdir(original_cwd)
+            print(f"[INFO] Changed back to: {original_cwd}")
+        
+        # Add ops directory to Python path so compiled CUDA ops can be imported
+        sys.path.insert(0, str(ops_dir))
+        print(f"[INFO] Added ops directory to Python path: {ops_dir}")
+    else:
+        print(f"[ERROR] CUDA ops directory not found: {ops_dir}")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(1)
     
     # Parse arguments
     # Use allow_abbrev=False and ignore unknown args to handle SageMaker's hyperparameter passing
@@ -200,7 +259,6 @@ def main():
             print(f"[DEBUG] DINO directory contents: {list(dino_dir.iterdir())[:10]}")
         
         # Change to DINO directory for import
-        import os
         original_cwd = os.getcwd()
         os.chdir(str(dino_dir))
         print(f"[DEBUG] Changed to DINO directory: {os.getcwd()}")
@@ -213,32 +271,23 @@ def main():
         
         print("[OK] DINO main module imported successfully")
         
-        # Create args object compatible with DINO's main.py
-        dino_parser = get_args_parser()
-        
-        # Build args for DINO
-        dino_args = dino_parser.parse_args([])  # Empty list, we'll set values directly
-        
-        # Set paths for SageMaker
-        dino_args.coco_path = str(data_root)
-        dino_args.output_dir = str(output_dir)
-        dino_args.dataset_file = 'coco'
-        
-        # Set config file path (will be copied to container)
-        # Check if custom config was included in source
+        # Check which config file exists FIRST (before parsing args)
         custom_config_path = Path('/opt/ml/code/DINO/config/DINO/DINO_4scale_room_detection.py')
         base_config_path = dino_dir / 'config' / 'DINO' / 'DINO_4scale.py'
         
+        config_file = None
+        config_options = []
+        
         if custom_config_path.exists():
-            dino_args.config_file = str(custom_config_path)
+            config_file = str(custom_config_path)
             print(f"[OK] Using custom room detection config from source")
         elif (dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py').exists():
-            dino_args.config_file = str(dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py')
+            config_file = str(dino_dir / 'config' / 'DINO' / 'DINO_4scale_room_detection.py')
             print(f"[OK] Using custom room detection config from cloned repo")
         elif base_config_path.exists():
             # Fallback: use base config with options override
-            dino_args.config_file = str(base_config_path)
-            dino_args.options = [
+            config_file = str(base_config_path)
+            config_options = [
                 f'num_classes={args.num_classes}',
                 f'batch_size={args.batch_size}',
                 f'epochs={args.epochs}',
@@ -260,6 +309,35 @@ def main():
             sys.stderr.flush()
             sys.exit(1)
         
+        # Build command line args for DINO's parser (MUST include --config_file!)
+        dino_cmd_args = [
+            '--config_file', config_file,
+            '--coco_path', str(data_root),
+            '--output_dir', str(output_dir),
+            '--dataset_file', 'coco',
+        ]
+        
+        # CRITICAL: Always pass num_classes via --options to override config defaults
+        # DINO doesn't accept --num_classes directly, must use --options
+        override_options = [
+            f'num_classes={args.num_classes}',
+            f'dn_labelbook_size={args.num_classes}',  # Must match num_classes
+        ]
+        
+        # Add base config options if using base config
+        if config_options:
+            override_options.extend(config_options)
+        
+        # Add all options to command
+        if override_options:
+            dino_cmd_args.extend(['--options'] + override_options)
+        
+        # Create args object compatible with DINO's main.py
+        dino_parser = get_args_parser()
+        
+        # Parse with actual arguments (not empty list!)
+        dino_args = dino_parser.parse_args(dino_cmd_args)
+        
         # Handle distributed training (SageMaker sets these)
         dino_args.world_size = int(os.environ.get('SM_NUM_GPUS', 1))
         dino_args.dist_url = 'env://'
@@ -280,13 +358,15 @@ def main():
         dino_args.find_unused_params = False
         
         print(f"[OK] Starting DINO training with config:")
-        print(f"  Config file: {dino_args.config_file}")
+        print(f"  Config file: {config_file}")
         print(f"  COCO path: {dino_args.coco_path}")
         print(f"  Output dir: {dino_args.output_dir}")
         print(f"  Epochs: {args.epochs}")
         print(f"  Batch size: {args.batch_size}")
         print(f"  Num classes: {args.num_classes}")
         print(f"  World size (GPUs): {dino_args.world_size}")
+        if config_options:
+            print(f"  Config options: {', '.join(config_options[:3])}...")
         
         # Run DINO training
         dino_main(dino_args)

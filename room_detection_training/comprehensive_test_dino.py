@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-Comprehensive Room Detection Model Testing Script
-Creates detailed analysis, video visualizations, and performance metrics
+Comprehensive DINO Model Testing Script
+Mirrors the YOLO comprehensive_test.py but adapted for DINO inference
 
-Tests multiple models and compares them side-by-side
+Tests DINO models and generates comparable metrics to YOLO
 """
 
-from ultralytics import YOLO
+import torch
+import torch.nn as nn
 from pathlib import Path
 import pandas as pd
-import torch
 import cv2
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import sys
+import json
+from typing import List, Tuple, Dict
 
 start_time = time.time()
 
@@ -24,56 +27,166 @@ fps = 10
 
 # Dataset paths
 root = Path.cwd()
-dataset_dir = root / "yolo_room_only"  # Test on room dataset
+dataset_dir = root / "yolo_room_only"  # Test on room dataset for consistency
 test_images_dir = dataset_dir / "test/images"
 test_labels_dir = dataset_dir / "test/labels"
 
 # Output directory with timestamp
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-batch_tag = f"room_detection_test_{timestamp}"
+batch_tag = f"dino_detection_test_{timestamp}"
 output_dir = root / batch_tag
 output_dir.mkdir(parents=True, exist_ok=True)
 
-print(f"Room Detection Comprehensive Testing")
+print(f"DINO Model Comprehensive Testing")
 print(f"Output directory: {batch_tag}")
 print(f"Test images: {len(list(test_images_dir.glob('*.png')))}")
 print(f"Test labels: {len(list(test_labels_dir.glob('*.txt')))}")
 
-# === MODEL DISCOVERY ===
+# === DINO MODEL DISCOVERY ===
+# Look for DINO models in local_training_output/*/dino_checkpoint.pth
 all_model_paths = []
-all_model_paths.extend(list((root / "local_training_output").glob("*/weights/best.pt")))
-all_model_paths.extend(list((root / "runs/detect").glob("*/weights/best.pt")))
+all_model_paths.extend(list((root / "local_training_output").glob("*/dino_checkpoint.pth")))
+all_model_paths.extend(list((root / "local_training_output").glob("*/checkpoint*.pth")))
+all_model_paths.extend(list((root / "local_training_output").glob("*/best.pth")))
 
-print(f"Found {len(all_model_paths)} total model(s)")
+print(f"Found {len(all_model_paths)} DINO model(s)")
 
-# Filter OUT old wall-trained models (room_detection_v2, yolo-v8l-200epoch)
-# Keep all models with "room-detect" or "room-segment" in the name
-OLD_WALL_MODELS = ["room_detection_v2", "yolo-v8l-200epoch", "seg_test", "dino_test"]
-model_paths = [p for p in all_model_paths 
-               if not any(old_model in str(p) for old_model in OLD_WALL_MODELS)]
-
-if not model_paths:
-    print(f"\nNo room-trained models found!")
-    print(f"   Excluded old wall models: {OLD_WALL_MODELS}")
-    print(f"   Please ensure room models are in: local_training_output/room-detect-*/weights/best.pt")
+if not all_model_paths:
+    print(f"\nNo DINO models found!")
+    print(f"   Expected location: local_training_output/dino-*/dino_checkpoint.pth")
+    print(f"   Please download trained DINO model from S3")
     exit(1)
 
-# Sort by modification time (newest first) for consistent ordering
-model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+# Sort by modification time (newest first)
+model_paths = sorted(all_model_paths, key=lambda p: p.stat().st_mtime, reverse=True)
 
-print(f"Testing {len(model_paths)} room-trained model(s):")
+print(f"Testing {len(model_paths)} DINO model(s):")
 for i, path in enumerate(model_paths, 1):
-    model_name = path.parent.parent.name
+    model_name = path.parent.name
     print(f"  {i}. {model_name}")
 
 # === DRAW CONFIG ===
 COLORS = {"TP": (0,255,0), "FP": (0,0,255), "FN": (255,0,0)}  # TP=Green, FP=Red, FN=Blue
 THICK = 2
 conf_threshold = 0.3  # Lower threshold for room detection
-IoU_TH = 0.5  # Standard IoU threshold for room detection
+IoU_TH = 0.5  # Standard IoU threshold
 FP_SUPPRESS_IOU = 0.2  # Suppress overlapping FPs
 
-# === UTILS ===
+# === DINO SETUP ===
+def setup_dino():
+    """Setup DINO environment and imports"""
+    # Add DINO to path if it exists
+    dino_dir = root / "DINO"
+    if not dino_dir.exists():
+        print(f"[ERROR] DINO directory not found at {dino_dir}")
+        print(f"[INFO] Please clone DINO: git clone https://github.com/IDEA-Research/DINO.git")
+        sys.exit(1)
+    
+    sys.path.insert(0, str(dino_dir))
+    
+    # Import DINO modules
+    try:
+        from models import build_model
+        from util.slconfig import SLConfig
+        from datasets import build_dataset
+        from util.visualizer import COCOVisualizer
+        from util import box_ops
+        return build_model, SLConfig, box_ops
+    except ImportError as e:
+        print(f"[ERROR] Failed to import DINO modules: {e}")
+        print(f"[INFO] Make sure DINO is properly installed")
+        sys.exit(1)
+
+build_model, SLConfig, box_ops = setup_dino()
+
+def load_dino_model(checkpoint_path: Path, config_path: Path = None):
+    """Load DINO model from checkpoint"""
+    
+    # If no config provided, look for it in the same directory or use default
+    if config_path is None:
+        # Look for config in same directory
+        config_candidates = [
+            checkpoint_path.parent / "dino_config.py",
+            checkpoint_path.parent / "config.py",
+            root / "DINO/config/DINO/DINO_4scale_room_detection.py",
+            root / "DINO/config/DINO/DINO_4scale.py",
+        ]
+        
+        for candidate in config_candidates:
+            if candidate.exists():
+                config_path = candidate
+                break
+        
+        if config_path is None:
+            print(f"[ERROR] Could not find DINO config file")
+            print(f"[INFO] Looked in: {[str(c) for c in config_candidates]}")
+            sys.exit(1)
+    
+    print(f"  Loading config from: {config_path}")
+    
+    # Load config
+    args = SLConfig.fromfile(str(config_path))
+    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # Build model
+    model, criterion, postprocessors = build_model(args)
+    
+    # Load checkpoint
+    checkpoint = torch.load(str(checkpoint_path), map_location='cpu')
+    
+    # Load model state
+    if 'model' in checkpoint:
+        model.load_state_dict(checkpoint['model'], strict=False)
+    else:
+        model.load_state_dict(checkpoint, strict=False)
+    
+    model.to(args.device)
+    model.eval()
+    
+    print(f"  Model loaded: {checkpoint_path.name}")
+    print(f"  Device: {args.device}")
+    
+    return model, postprocessors, args
+
+def preprocess_image(image_path: Path, device: str = 'cuda'):
+    """Preprocess image for DINO inference"""
+    import torchvision.transforms as T
+    
+    # Load image
+    img = cv2.imread(str(image_path))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    # Get original size
+    h, w = img.shape[:2]
+    orig_size = torch.tensor([h, w])
+    
+    # Transform
+    transform = T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    
+    img_tensor = transform(img).unsqueeze(0).to(device)
+    
+    return img_tensor, orig_size, img
+
+def run_dino_inference(model, image_tensor, orig_size, postprocessors, args):
+    """Run DINO inference on image"""
+    with torch.no_grad():
+        outputs = model(image_tensor)
+        
+        # Post-process outputs
+        orig_target_sizes = orig_size.unsqueeze(0).to(args.device)
+        results = postprocessors['bbox'](outputs, orig_target_sizes)[0]
+        
+        # Extract predictions
+        scores = results['scores']
+        labels = results['labels']
+        boxes = results['boxes']  # [x1, y1, x2, y2] format
+        
+        return scores, labels, boxes
+
+# === UTILS (Same as YOLO script) ===
 def iou_tensor(b1, b2):
     inter_x1 = torch.max(b1[0], b2[0]); inter_y1 = torch.max(b1[1], b2[1])
     inter_x2 = torch.min(b1[2], b2[2]); inter_y2 = torch.min(b1[3], b2[3])
@@ -98,13 +211,13 @@ def dotted(img, x1, y1, x2, y2, color, thk=1, gap=5):
         cv2.line(img, (x1, j), (x1, min(j+gap, y2)), color, thk)
         cv2.line(img, (x2, j), (x2, min(j+gap, y2)), color, thk)
 
-def create_top_10_pdf(model, summary_df, output_dir, batch_tag):
+def create_top_10_pdf(model_name, summary_df, output_dir, batch_tag):
     """Create PDF with top 10 images by recall showing predictions"""
     from matplotlib.backends.backend_pdf import PdfPages
     import matplotlib.patches as patches
 
     # Load predictions and calculate per-image recall
-    csv_path = output_dir / f"predictions_{summary_df.iloc[0]['model']}.csv"
+    csv_path = output_dir / f"predictions_{model_name}.csv"
     df = pd.read_csv(csv_path)
 
     # Calculate per-image metrics
@@ -159,11 +272,9 @@ def create_top_10_pdf(model, summary_df, output_dir, batch_tag):
                     color = 'red'
                     label = f"FP {row['pred_confidence']:.2f}"
                 elif row['match_type'] == 'FN':
-                    # Draw FN as dotted rectangle
                     if pd.notna(row['gt_bbox']):
                         gt_box = eval(row['gt_bbox'])
                         x1, y1, x2, y2 = gt_box
-                        # Draw dotted rectangle for FN
                         for offset in range(0, int(x2-x1), 10):
                             ax.plot([x1+offset, min(x1+offset+5, x2)], [y1, y1], color='yellow', linewidth=2)
                             ax.plot([x1+offset, min(x1+offset+5, x2)], [y2, y2], color='yellow', linewidth=2)
@@ -200,7 +311,7 @@ def create_top_10_pdf(model, summary_df, output_dir, batch_tag):
 
 # === MAIN PROCESSING LOOP ===
 for model_path in model_paths:
-    model_name = model_path.parent.parent.name
+    model_name = model_path.parent.name
     print(f"\nEvaluating {model_name}")
 
     # Output files for this model
@@ -212,22 +323,22 @@ for model_path in model_paths:
         print(f"  Skipping {model_name}: output files already exist")
         continue
 
-    # Load model
-    model = YOLO(model_path)
-    model_type = "SEGMENTATION" if "segment" in model_name.lower() or "seg" in model_name.lower() else "DETECTION"
+    # Load DINO model
+    try:
+        model, postprocessors, args = load_dino_model(model_path)
+    except Exception as e:
+        print(f"  [ERROR] Failed to load model: {e}")
+        continue
     
     # Get test images list
     test_images = list(test_images_dir.glob("*.png"))
     
-    # Detect model class configuration
-    # Run a dummy inference to get class names
-    dummy_result = model(test_images[0], verbose=False)[0]
-    num_classes = len(dummy_result.names)
-    class_names = list(dummy_result.names.values())
-    room_class_id = 1 if num_classes == 2 else 0
+    # Determine class mapping (assume 2-class: 0=wall, 1=room)
+    num_classes = 2  # DINO config
+    room_class_id = 1  # Room is class 1
     
-    print(f"  Model loaded: {model_name} ({model_type})")
-    print(f"  Classes: {class_names} (evaluating class {room_class_id} = room)")
+    print(f"  Model loaded: {model_name} (DINO Transformer)")
+    print(f"  Classes: 2 (evaluating class {room_class_id} = room)")
 
     rows = []
     vw = None
@@ -235,21 +346,22 @@ for model_path in model_paths:
     # Process all test images
     print(f"  Processing {len(test_images)} test images...")
 
-    for i, img_path in enumerate(test_images):
-        if (i + 1) % 50 == 0 or i == 0:
-            print(f"    Processed {i+1}/{len(test_images)} images...")
+    for img_idx, img_path in enumerate(test_images):
+        if (img_idx + 1) % 50 == 0 or img_idx == 0:
+            print(f"    Processed {img_idx+1}/{len(test_images)} images...")
 
         img_name = img_path.name
 
-        # Run inference
-        results = model(img_path, conf=conf_threshold, iou=0.5, verbose=False)
-        if not results or len(results) == 0:
+        # Run DINO inference
+        try:
+            img_tensor, orig_size, orig_img = preprocess_image(img_path, args.device)
+            scores, labels, boxes = run_dino_inference(model, img_tensor, orig_size, postprocessors, args)
+        except Exception as e:
+            print(f"    [WARN] Failed to process {img_name}: {e}")
             continue
 
-        r = results[0]
-
         # Original image dimensions and area
-        iw, ih = r.orig_shape[1], r.orig_shape[0]
+        ih, iw = orig_img.shape[:2]
         img_area = iw * ih
 
         # Initialize video writer on first frame
@@ -258,33 +370,11 @@ for model_path in model_paths:
             if not vw.isOpened():
                 raise RuntimeError(f"VideoWriter failed to open: {video_path}")
 
-        # Filter predictions by confidence and class
-        # Handle both detection (boxes) and segmentation (masks)
-        # For 2-class models: only evaluate ROOM class (class 1 = room, class 0 = wall)
-        # For 1-class models: class 0 = room
+        # Filter predictions by confidence and class (room only)
         preds = []
-        is_segmentation = hasattr(r, 'masks') and r.masks is not None
-        
-        # Determine if this is a 2-class model by checking class names
-        num_classes = len(r.names)
-        room_class_id = 1 if num_classes == 2 else 0  # 2-class: room=1, 1-class: room=0
-        
-        if is_segmentation:
-            # Segmentation model: use mask bounding boxes
-            for i, mask in enumerate(r.masks):
-                conf = float(r.boxes.conf[i])
-                cls = int(r.boxes.cls[i])
-                # Only include predictions of the room class
-                if conf >= conf_threshold and cls == room_class_id:
-                    preds.append(r.boxes[i])  # Use box from mask
-        else:
-            # Detection model: use boxes directly
-            for box in r.boxes:
-                conf = float(box.conf[0])
-                cls = int(box.cls[0])
-                # Only include predictions of the room class
-                if conf >= conf_threshold and cls == room_class_id:
-                    preds.append(box)
+        for score, label, box in zip(scores, labels, boxes):
+            if score >= conf_threshold and label == room_class_id:
+                preds.append((box, score.item()))
 
         # Load ground truth boxes (YOLO format)
         gt_boxes = []
@@ -294,7 +384,6 @@ for model_path in model_paths:
                 for line in f:
                     parts = line.strip().split()
                     if len(parts) >= 5:
-                        # YOLO format: class x_center y_center width height
                         x_center, y_center, width, height = map(float, parts[1:5])
                         x1 = (x_center - width/2) * iw
                         y1 = (y_center - height/2) * ih
@@ -302,22 +391,16 @@ for model_path in model_paths:
                         y2 = (y_center + height/2) * ih
                         gt_boxes.append(torch.tensor([x1, y1, x2, y2], dtype=torch.float32))
 
-        # Match predictions to ground truth
+        # Match predictions to ground truth (same logic as YOLO script)
         matched_gt = set()
         tp_boxes = []
-
-        # Process predictions in confidence order (highest first)
-        sorted_preds = sorted(preds, key=lambda p: float(p.conf[0]), reverse=True)
-
-        # First pass: match predictions to ground truth
         temp_tp_boxes = []
         temp_fp_boxes = []
 
-        for pred in sorted_preds:
-            box = pred.xyxy[0]  # [x1,y1,x2,y2] in original pixel coords
-            conf = float(pred.conf[0])
+        # Sort predictions by confidence
+        preds.sort(key=lambda p: p[1], reverse=True)
 
-            # Find best matching ground truth
+        for box, conf in preds:
             best_iou = 0
             best_gt_idx = -1
 
@@ -330,54 +413,48 @@ for model_path in model_paths:
                     best_gt_idx = gt_idx
 
             if best_iou >= IoU_TH and best_gt_idx != -1:
-                # True Positive
                 matched_gt.add(best_gt_idx)
                 temp_tp_boxes.append((box, conf, best_gt_idx, best_iou))
             else:
-                # False Positive
                 temp_fp_boxes.append((box, conf))
 
-        # === IoU OVERLAP SUPPRESSION ===
-
-        # Suppress overlapping TPs (>20% IoU) - keep higher confidence
-        tp_boxes = []
-        temp_tp_boxes.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence descending
+        # === IoU OVERLAP SUPPRESSION (same as YOLO script) ===
+        temp_tp_boxes.sort(key=lambda x: x[1], reverse=True)
 
         for i, (box, conf, gt_idx, iou_val) in enumerate(temp_tp_boxes):
             should_keep = True
             for kept_box, _, _, _ in tp_boxes:
-                if iou_tensor(box, kept_box) > 0.20:  # 20% IoU threshold for TPs
+                if iou_tensor(box, kept_box) > 0.20:
                     should_keep = False
                     break
             if should_keep:
                 tp_boxes.append((box, conf, gt_idx, iou_val))
 
-        # Suppress FPs that overlap with TPs (>10% IoU)
+        # Suppress FPs overlapping with TPs
         filtered_fp_boxes = []
         for fp_box, fp_conf in temp_fp_boxes:
             should_keep = True
             for tp_box, _, _, _ in tp_boxes:
-                if iou_tensor(fp_box, tp_box) > 0.10:  # 10% IoU threshold for FP vs TP
+                if iou_tensor(fp_box, tp_box) > 0.10:
                     should_keep = False
                     break
             if should_keep:
                 filtered_fp_boxes.append((fp_box, fp_conf))
 
-        # Suppress overlapping FPs (>20% IoU) - keep higher confidence
+        # Suppress overlapping FPs
         fp_boxes = []
-        filtered_fp_boxes.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence descending
+        filtered_fp_boxes.sort(key=lambda x: x[1], reverse=True)
 
         for i, (box, conf) in enumerate(filtered_fp_boxes):
             should_keep = True
             for kept_box, _ in fp_boxes:
-                if iou_tensor(box, kept_box) > 0.20:  # 20% IoU threshold for FPs
+                if iou_tensor(box, kept_box) > 0.20:
                     should_keep = False
                     break
             if should_keep:
                 fp_boxes.append((box, conf))
 
         # === GENERATE FINAL RESULTS ===
-
         # Add TP results
         for box, conf, gt_idx, iou_val in tp_boxes:
             bx = metrics(box.tolist(), img_area)
@@ -423,16 +500,9 @@ for model_path in model_paths:
                 })
 
         # === CREATE VISUALIZATION FRAME ===
-
-        # Load original image
-        frame = r.orig_img.copy()
-        if len(frame.shape) == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-
-        # Resize to fixed video dimensions
+        frame = cv2.cvtColor(orig_img, cv2.COLOR_RGB2BGR)
         frame_out = cv2.resize(frame, (VID_W, VID_H), interpolation=cv2.INTER_LINEAR)
 
-        # Scale factor for coordinate transformation
         scale_x = VID_W / iw
         scale_y = VID_H / ih
 
@@ -445,7 +515,7 @@ for model_path in model_paths:
             cv2.putText(frame_out, f"TP {conf:.2f}", (X1, max(Y1-5, 15)),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLORS["TP"], 1)
 
-        # Draw False Positives (Red) - predictions not matched to GT
+        # Draw False Positives (Red)
         for box, conf in fp_boxes:
             x1, y1, x2, y2 = box.tolist()
             X1, Y1 = int(x1 * scale_x), int(y1 * scale_y)
@@ -454,7 +524,7 @@ for model_path in model_paths:
             cv2.putText(frame_out, f"FP {conf:.2f}", (X1, max(Y1-5, 15)),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, COLORS["FP"], 1)
 
-        # Draw False Negatives (Blue dotted) - unmatched GT
+        # Draw False Negatives (Blue dotted)
         for gt_idx, gt_box in enumerate(gt_boxes):
             if gt_idx not in matched_gt:
                 x1, y1, x2, y2 = gt_box.tolist()
@@ -482,10 +552,8 @@ for model_path in model_paths:
         print(f"  Video saved: {video_path.name}")
 
 # === CREATE SUMMARY ANALYSIS ===
-
 print(f"\nCreating summary analysis...")
 
-# Collect results from all models
 summary_rows = []
 
 for csv_path in output_dir.glob("predictions_*.csv"):
@@ -534,7 +602,7 @@ for csv_path in output_dir.glob("predictions_*.csv"):
         plt.axvline(median_image_recall, color='orange', linestyle='--', label=f'Median: {median_image_recall:.3f}')
         plt.xlabel('Per-Image Recall')
         plt.ylabel('Number of Images')
-        plt.title(f'Per-Image Recall Distribution - {model_name}')
+        plt.title(f'Per-Image Recall Distribution - {model_name} (DINO)')
         plt.legend()
         plt.grid(axis='y', alpha=0.3)
         plt.tight_layout()
@@ -546,17 +614,8 @@ for csv_path in output_dir.glob("predictions_*.csv"):
     
     # === PER-MODEL TOP 10 PDF ===
     try:
-        # Find model path for this model
-        model_path_for_pdf = None
-        for mp in model_paths:
-            if mp.parent.parent.name == model_name:
-                model_path_for_pdf = mp
-                break
-        
-        if model_path_for_pdf:
-            model_for_pdf = YOLO(model_path_for_pdf)
-            pdf_path = create_top_10_pdf(model_for_pdf, df, output_dir, f"{model_name}")
-            print(f"  Top 10 PDF saved: {pdf_path.name}")
+        pdf_path = create_top_10_pdf(model_name, df, output_dir, f"{model_name}")
+        print(f"  Top 10 PDF saved: {pdf_path.name}")
     except Exception as e:
         print(f"  PDF generation failed for {model_name}: {e}")
 
@@ -568,8 +627,6 @@ summary_df.to_csv(summary_csv, index=False, float_format='%.4f')
 print(f"Summary saved: {summary_csv.name}")
 
 # === CREATE VISUALIZATIONS ===
-
-# Performance comparison plot
 if len(summary_df) > 0:
     plt.figure(figsize=(12, 8))
 
@@ -583,7 +640,7 @@ if len(summary_df) > 0:
 
     plt.xlabel('Models')
     plt.ylabel('Score')
-    plt.title(f'Room Detection Performance Comparison - {batch_tag}')
+    plt.title(f'DINO Performance Comparison - {batch_tag}')
     plt.xticks(x, models, rotation=45, ha='right')
     plt.legend()
     plt.ylim(0, 1.0)
@@ -595,10 +652,6 @@ if len(summary_df) > 0:
     plt.close()
 
     print(f"Performance plot saved: {perf_plot.name}")
-
-# Image-level recall distribution
-# Note: Per-model recall distributions and top 10 PDFs are generated above in the metrics loop
-# (No longer generating combined versions here)
 
 # Print final summary
 print(f"\nTesting completed in {time.time() - start_time:.1f} seconds!")
@@ -612,3 +665,7 @@ if len(summary_df) > 0:
     top_models = summary_df.sort_values("f1", ascending=False).head(3)
     for _, row in top_models.iterrows():
         print(f"  {row['model']}: F1={row['f1']:.3f}, Precision={row['precision']:.3f}, Recall={row['recall']:.3f}")
+
+print(f"\n[INFO] DINO model evaluation complete!")
+print(f"[INFO] Compare results with YOLO models from comprehensive_test.py")
+
