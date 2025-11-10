@@ -33,7 +33,7 @@ def main():
         "transformers>=4.20.0",
         "opencv-python",
         "pillow",
-        "numpy<1.24",  # Pin numpy to avoid np.float deprecation error in pycocotools
+        "numpy<1.24",  # CRITICAL: Pin numpy to avoid np.float deprecation error in pycocotools
         "pycocotools",
         "matplotlib",
         "tqdm",
